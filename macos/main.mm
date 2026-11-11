@@ -1,7 +1,7 @@
 #import <AppKit/AppKit.h>
 #import "panel.hpp"
 
-#include "geometry.hpp"
+#include "animation.hpp"
 #include "sounds.hpp"
 
 #include <cerrno>
@@ -15,13 +15,6 @@ namespace {
 using namespace paw;
 
 constexpr CGFloat actorWidth = 292, actorHeight = 246, footY = 226;
-enum SpriteId { idle, curious, pawUp, sleepPose, belly, crouch, walk1, walk2, walk3, walk4 };
-
-struct Pose {
-  SpriteId sprite = idle;
-  CGFloat width = 158, height = 142, lift = 0;
-  bool mirrored = false;
-};
 
 double uptime() { return NSProcessInfo.processInfo.systemUptime; }
 
@@ -74,8 +67,8 @@ NSSound* chime(std::initializer_list<Note> notes) {
 @end
 
 @implementation PawView {
-  NSBitmapImageRep* _bitmaps[10];
-  NSImage* _sprites[10];
+  NSBitmapImageRep* _bitmaps[spriteCount];
+  NSImage* _sprites[spriteCount];
   Pose _pose;
   NSRect _spriteRect;
   CGFloat _scale;
@@ -94,7 +87,8 @@ NSSound* chime(std::initializer_list<Note> notes) {
 
 - (BOOL)loadSprites {
   NSArray<NSString*>* names = @[@"idle", @"curious", @"paw", @"sleep", @"belly", @"crouch",
-    @"walk-1", @"walk-2", @"walk-3", @"walk-4"];
+    @"walk-1", @"walk-1-a", @"walk-1-b", @"walk-2", @"walk-2-a", @"walk-2-b",
+    @"walk-3", @"walk-3-a", @"walk-3-b", @"walk-4", @"walk-4-a", @"walk-4-b"];
   NSURL* directory = assets();
   for (NSUInteger i = 0; i < names.count; ++i) {
     NSURL* url = [directory URLByAppendingPathComponent:[names[i] stringByAppendingPathExtension:@"png"]];
@@ -130,11 +124,50 @@ NSSound* chime(std::initializer_list<Note> notes) {
   _hearts = hearts;
   _ring = ring;
   _ringAge = ringAge;
-  NSSize image = _sprites[pose.sprite].size;
-  const CGFloat fit = std::min(pose.width / image.width, pose.height / image.height);
-  _spriteRect = NSMakeRect((actorWidth - image.width * fit) / 2, footY - image.height * fit + pose.lift,
-    image.width * fit, image.height * fit);
+  const NSSize image = _sprites[pose.sprite].size;
+  const auto bounds = spriteBounds(image.width, image.height, pose, actorWidth / 2, footY);
+  _spriteRect = NSMakeRect(bounds.left, bounds.top, bounds.width(), bounds.height());
   self.needsDisplay = YES;
+}
+
+- (void)drawPose {
+  NSRect bounds = _spriteRect;
+  const Pose& pose = _pose;
+  [NSGraphicsContext saveGraphicsState];
+  if (pose.mirrored) {
+    NSAffineTransform* flip = [NSAffineTransform transform];
+    [flip translateXBy:NSMaxX(bounds) yBy:NSMinY(bounds)];
+    [flip scaleXBy:-1 yBy:1];
+    [flip concat];
+    bounds.origin = NSZeroPoint;
+  }
+  NSImage* image = _sprites[pose.sprite];
+  [image drawInRect:bounds fromRect:NSZeroRect operation:NSCompositingOperationSourceOver
+    fraction:1 respectFlipped:YES hints:nil];
+
+  if (pose.blink > 0) {
+    for (const auto& eye : eyesFor(pose.sprite)) {
+      const double x = NSMinX(bounds) + eye.x * NSWidth(bounds), y = NSMinY(bounds) + eye.y * NSHeight(bounds);
+      const double rx = eye.radiusX * NSWidth(bounds), ry = eye.radiusY * NSHeight(bounds);
+      const NSRect lid = NSMakeRect(x - rx, y - ry, 2 * rx, 2 * ry);
+      [NSGraphicsContext saveGraphicsState];
+      [[NSBezierPath bezierPathWithOvalInRect:lid] addClip];
+      NSRectClip(NSMakeRect(NSMinX(lid), NSMinY(lid), NSWidth(lid), NSHeight(lid) * pose.blink));
+      [image drawInRect:NSOffsetRect(bounds, 0, 2.2 * ry) fromRect:NSZeroRect
+        operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:YES hints:nil];
+      [NSGraphicsContext restoreGraphicsState];
+      if (pose.blink > .72) {
+        NSBezierPath* seam = [NSBezierPath bezierPath];
+        [seam moveToPoint:NSMakePoint(x - .8 * rx, y)];
+        [seam curveToPoint:NSMakePoint(x + .8 * rx, y)
+          controlPoint1:NSMakePoint(x - .3 * rx, y + .32 * ry) controlPoint2:NSMakePoint(x + .3 * rx, y + .32 * ry)];
+        [[NSColor colorWithWhite:.13 alpha:.7 * smoothStep((pose.blink - .72) / .28)] setStroke];
+        seam.lineWidth = .8;
+        [seam stroke];
+      }
+    }
+  }
+  [NSGraphicsContext restoreGraphicsState];
 }
 
 - (void)drawRect:(NSRect)dirtyRect {
@@ -148,18 +181,7 @@ NSSound* chime(std::initializer_list<Note> notes) {
 
   [[NSColor colorWithWhite:.15 alpha:.17] setFill];
   [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(actorWidth / 2 - 59, footY - 6, 118, 12)] fill];
-  [NSGraphicsContext saveGraphicsState];
-  NSRect imageRect = _spriteRect;
-  if (_pose.mirrored) {
-    NSAffineTransform* flip = [NSAffineTransform transform];
-    [flip translateXBy:NSMaxX(imageRect) yBy:NSMinY(imageRect)];
-    [flip scaleXBy:-1 yBy:1];
-    [flip concat];
-    imageRect.origin = NSZeroPoint;
-  }
-  [_sprites[_pose.sprite] drawInRect:imageRect fromRect:NSZeroRect operation:NSCompositingOperationSourceOver
-    fraction:1 respectFlipped:YES hints:nil];
-  [NSGraphicsContext restoreGraphicsState];
+  [self drawPose];
 
   if (_title.length) {
     const BOOL receipt = _detail.length > 0;
@@ -207,7 +229,7 @@ NSSound* chime(std::initializer_list<Note> notes) {
   NSUserDefaults* _settings;
   NSTimer* _timer;
   dispatch_source_t _input;
-  NSSound* _playSound;
+  NSSound* _meowSound;
   NSSound* _finishSound;
   NSSound* _playingSound;
   NSInteger _size, _demoCycle;
@@ -216,8 +238,9 @@ NSSound* chime(std::initializer_list<Note> notes) {
   std::deque<paw::Point> _route;
   std::mt19937 _random;
   size_t _roamCount;
-  double _start, _lastTick, _idleSince, _nextRoam, _walked, _hoverSince, _pointerMoved;
-  double _playUntil, _playedAt, _caughtAt, _chaseAfter, _nextPlaySound, _toastUntil;
+  double _start, _lastTick, _idleSince, _nextRoam, _walked, _walkSpeed, _hoverSince, _pointerMoved;
+  double _playUntil, _playedAt, _caughtAt, _chaseAfter, _nextMeow, _toastUntil, _stretchAt;
+  PoseAnimator _poses;
   int64_t _clockSecond;
   std::string _incoming, _activity, _count;
   Balance _balance;
@@ -273,7 +296,7 @@ NSSound* chime(std::initializer_list<Note> notes) {
   _nextRoam = _start + 2.1;
   [self paint:_start];
   [_window orderFrontRegardless];
-  _timer = [NSTimer timerWithTimeInterval:1.0 / 30 target:self selector:@selector(tick:) userInfo:nil repeats:YES];
+  _timer = [NSTimer timerWithTimeInterval:1.0 / 60 target:self selector:@selector(tick:) userInfo:nil repeats:YES];
   [NSRunLoop.mainRunLoop addTimer:_timer forMode:NSRunLoopCommonModes];
   if (_bridge) {
     _input = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, STDIN_FILENO, 0, dispatch_get_main_queue());
@@ -403,9 +426,10 @@ NSSound* chime(std::initializer_list<Note> notes) {
     _toast = _queued.front();
     _queued.pop_front();
     _toastUntil = now + 4.6;
-    if (_toast->outcome == "completed") [self playChime:YES];
+    if (_toast->outcome == "completed") [self playFinishSound];
   }
   [self moveAt:now delta:dt];
+  if (!_walking) _walkSpeed = 0;
   [self paint:now];
 }
 
@@ -428,7 +452,7 @@ NSSound* chime(std::initializer_list<Note> notes) {
     return;
   }
   _hoverSince = 0;
-  if (_toast || now < _playUntil) return;
+  if (_toast || now < _playUntil || (_stretchAt && now - _stretchAt < 1.35)) return;
   const double scale = [self scale];
   const paw::Point center = _position - paw::Point{0, 60 * scale};
   const double distance = length(mouse - center);
@@ -439,12 +463,13 @@ NSSound* chime(std::initializer_list<Note> notes) {
     if (distance < 63 * scale || length(goal - _position) < 9 * scale) {
       _facingRight = mouse.x > center.x;
       [self play:NO];
+      [self meow:NO];
       _caughtAt = now;
       _catchPoint = mouse;
       _chaseAfter = now + 2.1;
     } else {
       _route.clear();
-      [self stepToward:goal maxDistance:dt * 215 * scale];
+      [self stepToward:goal delta:dt speedLimit:215 * scale arriving:YES];
     }
     return;
   }
@@ -453,9 +478,13 @@ NSSound* chime(std::initializer_list<Note> notes) {
   while (!_route.empty() && length(_route.front() - _position) <= 3 * scale) {
     _position = _route.front();
     _route.pop_front();
-    if (_route.empty()) _nextRoam = now + (_activity == "working" ? 1.9 : 4.7);
+    if (_route.empty()) {
+      _nextRoam = now + (_activity == "working" ? 1.9 : 4.7);
+      if (_activity == "idle" && _roamCount % 3 == 0) _stretchAt = now;
+    }
   }
-  if (!_route.empty()) [self stepToward:_route.front() maxDistance:dt * (_activity == "working" ? 116 : 88) * scale];
+  if (!_route.empty()) [self stepToward:_route.front() delta:dt speedLimit:(_activity == "working" ? 116 : 88) * scale
+    arriving:_route.size() == 1];
 }
 
 - (void)chooseRoute {
@@ -474,11 +503,11 @@ NSSound* chime(std::initializer_list<Note> notes) {
   _route.assign(points.begin(), points.end());
 }
 
-- (void)stepToward:(paw::Point)goal maxDistance:(double)maxDistance {
+- (void)stepToward:(paw::Point)goal delta:(double)dt speedLimit:(double)limit arriving:(BOOL)arriving {
   const paw::Point vector = goal - _position;
   const double remaining = length(vector);
   if (remaining < .1) return;
-  const double step = std::min(remaining, maxDistance);
+  const double step = walkingStep(remaining, dt, limit, arriving, _walkSpeed);
   if (std::abs(vector.x) > 3) _facingRight = vector.x > 0;
   _position = _position + vector * (step / remaining);
   _walked += step / [self scale];
@@ -487,26 +516,29 @@ NSSound* chime(std::initializer_list<Note> notes) {
 
 - (void)paint:(double)now {
   const double elapsed = now - _start;
-  Pose pose;
-  pose.lift = std::sin(elapsed * 2.5) * 1.25;
+  Action action = Action::sit;
+  double age = 0;
   if (now < _playUntil) {
-    pose = {_rub ? belly : pawUp, _rub ? 188.0 : 158.0, _rub ? 114.0 : 144.0,
-      pose.lift + std::sin(elapsed * 12) * 2.4, !_rub && _facingRight};
+    action = _rub ? Action::roll : Action::reach;
+    age = now - _playedAt;
   } else if (_toast) {
-    const double age = 4.6 - (_toastUntil - now);
-    pose = {_toast->outcome == "completed" ? belly : curious, 188, 126,
-      pose.lift - (age < .7 ? 14 * std::abs(std::sin(age * 4.5)) : 0)};
-  } else if (_walking) {
-    pose = {SpriteId(walk1 + int(_walked / 11) % 4), 207, 119,
-      pose.lift - 2 * std::abs(std::sin(_walked / 11 * 1.57)), bool(_facingRight)};
-  } else if (_activity == "working") pose = {crouch, 179, 104, pose.lift};
-  else if (_activity == "thinking") pose.sprite = curious;
-  else if (now - _idleSince > 17) pose = {sleepPose, 173, 97, pose.lift};
+    action = _toast->outcome == "completed" ? Action::celebrate : Action::notice;
+    age = 4.6 - (_toastUntil - now);
+  } else if (_walking) action = Action::walk;
+  else if (_stretchAt && now - _stretchAt < 1.35) {
+    action = Action::stretch;
+    age = now - _stretchAt;
+  } else if (_activity == "working") action = Action::work;
+  else if (_activity == "thinking") action = Action::look;
+  else if (now - _idleSince > 17) action = Action::sleep;
+  const auto framePose = _poses.sample(catPose(action, elapsed, age, _walked, _facingRight), now);
 
   const double scale = [self scale];
   const paw::Point topLeft = _position - paw::Point{actorWidth * scale / 2, footY * scale};
   const NSRect frame = NSMakeRect(topLeft.x, -topLeft.y - actorHeight * scale, actorWidth * scale, actorHeight * scale);
-  if (!NSEqualRects(_window.frame, frame)) [_window setFrame:frame display:NO];
+  const NSRect previous = _window.frame;
+  if (!NSEqualSizes(previous.size, frame.size)) [_window setFrame:frame display:NO];
+  else if (!NSEqualPoints(previous.origin, frame.origin)) [_window setFrameOrigin:frame.origin];
   NSString* title = nil;
   NSString* detail = nil;
   if (_toast) {
@@ -517,7 +549,7 @@ NSSound* chime(std::initializer_list<Note> notes) {
       [[self activityText] stringByAppendingFormat:@" · %@", pawText(grouped(_count))];
   }
   const paw::Point ring = (_catchPoint - topLeft) * (1 / scale);
-  [_view showPose:pose scale:scale title:title detail:detail
+  [_view showPose:framePose scale:scale title:title detail:detail
     hearts:_playedAt ? now - _playedAt : -1 ring:NSMakePoint(ring.x, ring.y) ringAge:_caughtAt ? now - _caughtAt : -1];
   _window.ignoresMouseEvents = !_pressed && ![self onCat:pointer()];
 }
@@ -540,28 +572,41 @@ NSSound* chime(std::initializer_list<Note> notes) {
 - (void)releasePointer {
   const BOOL click = _pressed && !_dragged && length(pointer() - _pressPoint) < 6 * [self scale];
   _pressed = NO;
-  if (click) [self openPanel:nil];
+  if (click) {
+    [self meow:NO];
+    [self openPanel:nil];
+  }
 }
 
 - (void)play:(BOOL)rub {
   const double now = uptime();
   _rub = rub;
+  _stretchAt = 0;
   _playedAt = now;
   _playUntil = now + (rub ? 1.5 : .95);
   _route.clear();
   _nextRoam = std::max(_nextRoam, _playUntil + 2.2);
-  if (now >= _nextPlaySound) {
-    [self playChime:NO];
-    _nextPlaySound = now + 1.4;
-  }
+  if (rub) [self meow:NO];
 }
 
-- (void)playChime:(BOOL)finished {
-  if (!_sound) return;
-  if (!_playSound) _playSound = chime({{659.25, 68}, {880, 115}});
-  if (!_finishSound) _finishSound = chime({{523.25, 88}, {659.25, 88}, {783.99, 195}});
+- (void)meow:(BOOL)preview {
+  const double now = uptime();
+  if (!_sound || (!preview && now < _nextMeow)) return;
+  if (!_meowSound) _meowSound = [[NSSound alloc] initWithContentsOfURL:[assets() URLByAppendingPathComponent:@"meow.wav"]
+    byReference:NO];
+  if (!_meowSound) return;
+  _nextMeow = now + 5;
   [_playingSound stop];
-  _playingSound = finished ? _finishSound : _playSound;
+  _playingSound = _meowSound;
+  [_playingSound play];
+}
+
+- (void)playFinishSound {
+  if (!_sound) return;
+  if (!_finishSound) _finishSound = chime({{523.25, 88}, {659.25, 88}, {783.99, 195}});
+  _nextMeow = std::max(_nextMeow, uptime() + .5);
+  [_playingSound stop];
+  _playingSound = _finishSound;
   [_playingSound play];
 }
 
@@ -622,7 +667,7 @@ NSSound* chime(std::initializer_list<Note> notes) {
   _sound = !_sound;
   [_settings setBool:_sound forKey:@"soundEnabled"];
   [_panel showSize:_size sound:_sound];
-  if (_sound) [self playChime:NO];
+  if (_sound) [self meow:YES];
   else [_playingSound stop];
 }
 
@@ -633,14 +678,24 @@ NSSound* chime(std::initializer_list<Note> notes) {
 }
 
 - (void)setupMenu {
-  _status = [NSStatusBar.systemStatusBar statusItemWithLength:NSVariableStatusItemLength];
-  _status.button.image = [NSImage imageWithSystemSymbolName:@"pawprint.fill" accessibilityDescription:@"小爪同伴"];
-  if (!_status.button.image) _status.button.title = @"小爪同伴";
-  _status.button.toolTip = _bridge ? @"小爪同伴 · DeepSeek Harness" : @"小爪同伴 · 演示";
+  _status = [NSStatusBar.systemStatusBar statusItemWithLength:NSSquareStatusItemLength];
+  _status.autosaveName = @"Little Paw";
+  _status.visible = YES;
+  NSStatusBarButton* button = _status.button;
+  NSImage* symbol = [NSImage imageWithSystemSymbolName:@"pawprint.fill" accessibilityDescription:@"小爪同伴"];
+  if (symbol) {
+    button.image = [symbol imageWithSymbolConfiguration:[NSImageSymbolConfiguration
+      configurationWithPointSize:15 weight:NSFontWeightSemibold]] ?: symbol;
+    [button.image setTemplate:YES];
+    button.imagePosition = NSImageOnly;
+  } else button.title = @"🐾";
+  [button setAccessibilityLabel:@"小爪同伴"];
+  button.toolTip = _bridge ? @"小爪同伴 · DeepSeek Harness" : @"小爪同伴 · 演示";
   _menu = [[NSMenu alloc] initWithTitle:@"小爪同伴"];
   _menu.delegate = self;
   [self addItem:@"余额、最近任务与设置" action:@selector(openPanel:)];
   [self addItem:@"摸摸猫" action:@selector(petCat:)];
+  [self addItem:@"伸懒腰" action:@selector(stretch:)];
   [_menu addItem:NSMenuItem.separatorItem];
   _roamItem = [self addItem:@"桌面巡游" action:@selector(toggleRoam:)];
   _chaseItem = [self addItem:@"追光标" action:@selector(toggleChase:)];
@@ -665,6 +720,15 @@ NSSound* chime(std::initializer_list<Note> notes) {
 - (void)toggleRoam:(id)sender { (void)sender; _roam = !_roam; _route.clear(); }
 - (void)toggleChase:(id)sender { (void)sender; _chase = !_chase; }
 - (void)petCat:(id)sender { (void)sender; if (_hidden) [self toggleVisible:nil]; [self play:YES]; }
+
+- (void)stretch:(id)sender {
+  (void)sender;
+  if (_hidden) [self toggleVisible:nil];
+  _route.clear();
+  _playUntil = 0;
+  _stretchAt = uptime();
+  _nextRoam = std::max(_nextRoam, _stretchAt + 2.2);
+}
 
 - (void)bringHere:(id)sender {
   (void)sender;

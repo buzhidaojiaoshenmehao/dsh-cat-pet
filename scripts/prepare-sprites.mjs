@@ -56,3 +56,7 @@ function slice(file, columns, rows, names, align) {
 
 slice('poses.png', 3, 2, ['idle', 'curious', 'paw', 'sleep', 'belly', 'crouch'], false)
 slice('walk.png', 2, 2, ['walk-1', 'walk-2', 'walk-3', 'walk-4'], true)
+
+execFileSync('ffmpeg', ['-v', 'error', '-y', '-i', join(output, 'paw.png'), '-frames:v', '1',
+  '-vf', 'scale=112:112:force_original_aspect_ratio=decrease:flags=lanczos,format=rgba,pad=128:128:(ow-iw)/2:(oh-ih)/2:color=black@0',
+  '-threads', '1', join(output, 'icon.png')])

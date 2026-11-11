@@ -13,7 +13,9 @@ for (const arch of ['x64', 'arm64']) {
   if (!existsSync(join(root, 'bin', `win-${arch}`, 'LittlePaw.exe'))) throw new Error(`Build win-${arch} first`)
 }
 if (!existsSync(join(root, macExecutable))) throw new Error('Build macOS first')
-for (const sprite of ['idle', 'curious', 'paw', 'sleep', 'belly', 'crouch', 'walk-1', 'walk-2', 'walk-3', 'walk-4']) {
+if (!existsSync(join(root, 'bin', 'assets', 'meow.wav'))) throw new Error('Missing meow audio')
+const walkFrames = [1, 2, 3, 4].flatMap(step => ['', '-a', '-b'].map(frame => `walk-${step}${frame}`))
+for (const sprite of ['idle', 'curious', 'paw', 'sleep', 'belly', 'crouch', 'icon', ...walkFrames]) {
   if (!existsSync(join(root, 'bin', 'assets', `${sprite}.png`))) throw new Error(`Missing sprite ${sprite}`)
 }
 
@@ -31,6 +33,7 @@ try {
   copyFileSync(join(root, 'README.md'), join(folder, 'README.md'))
   mkdirSync(join(folder, 'assets'))
   copyFileSync(join(root, 'assets', 'PROMPTS.md'), join(folder, 'assets', 'PROMPTS.md'))
+  copyFileSync(join(root, 'assets', 'AUDIO.md'), join(folder, 'assets', 'AUDIO.md'))
   for (const directory of ['assets', 'win-x64', 'win-arm64']) {
     cpSync(join(root, 'bin', directory), join(folder, 'bin', directory),
       { recursive: true, filter: path => !path.endsWith('.DS_Store') })

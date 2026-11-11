@@ -26,10 +26,11 @@ constexpr int soundButton = 102, sizeSlider = 103;
 constexpr UINT_PTR clockTimer = 2;
 constexpr int minSize = 50, maxSize = 180;
 constexpr float panelWidth = 380, panelHeight = 520;
-enum MenuId { showBalance = 201, petCat, toggleRoam, toggleChase, toggleSound, bringHere, toggleVisible, quitPet };
-enum SpriteId { idle, curious, pawUp, sleep, belly, crouch, walk1, walk2, walk3, walk4 };
+enum MenuId { showBalance = 201, petCat, stretchPet, toggleRoam, toggleChase, toggleSound, bringHere, toggleVisible, quitPet };
 constexpr std::array spriteNames{L"idle", L"curious", L"paw", L"sleep", L"belly", L"crouch",
-  L"walk-1", L"walk-2", L"walk-3", L"walk-4"};
+  L"walk-1", L"walk-1-a", L"walk-1-b", L"walk-2", L"walk-2-a", L"walk-2-b",
+  L"walk-3", L"walk-3-a", L"walk-3-b", L"walk-4", L"walk-4-a", L"walk-4-b"};
+static_assert(spriteNames.size() == spriteCount);
 
 Point pointer() {
   POINT p{};
@@ -135,7 +136,7 @@ public:
     createTray();
     paintActor(start_);
     showPet();
-    if (!SetTimer(actor_, 1, 33, nullptr)) return 3;
+    if (!SetTimer(actor_, 1, 16, nullptr)) return 3;
     MSG message{};
     while (GetMessageW(&message, nullptr, 0, 0) > 0) {
       if (panelOpen_ && (message.hwnd == panel_ || IsChild(panel_, message.hwnd))) {
@@ -163,6 +164,7 @@ private:
   bool loadSprites() {
     const std::wstring folder = assetDirectory();
     if (folder.empty()) return false;
+    meowPath_ = folder + L"meow.wav";
     for (size_t i = 0; i < sprites_.size(); ++i) {
       sprites_[i] = std::make_unique<gd::Bitmap>((folder + spriteNames[i] + L".png").c_str());
       if (sprites_[i]->GetLastStatus() != gd::Ok || sprites_[i]->GetWidth() == 0) return false;
@@ -243,12 +245,17 @@ private:
     InvalidateRect(panel_, nullptr, FALSE);
   }
 
-  void playChime(bool completed) const {
+  void meow(ULONGLONG now, bool preview = false) {
+    if (!soundEnabled_ || (!preview && now < nextMeow_)) return;
+    nextMeow_ = now + 5000;
+    PlaySoundW(meowPath_.c_str(), nullptr, SND_FILENAME | SND_ASYNC | SND_NODEFAULT);
+  }
+
+  void playFinishSound(ULONGLONG now) {
     if (!soundEnabled_) return;
-    static const auto pet = makeChime({{659.25, 68}, {880, 115}});
     static const auto finish = makeChime({{523.25, 88}, {659.25, 88}, {783.99, 195}});
-    const auto& wave = completed ? finish : pet;
-    PlaySoundW(reinterpret_cast<LPCWSTR>(wave.data()), nullptr, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
+    nextMeow_ = std::max(nextMeow_, now + 500);
+    PlaySoundW(reinterpret_cast<LPCWSTR>(finish.data()), nullptr, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
   }
 
   void toggleChime() {
@@ -256,7 +263,7 @@ private:
     if (!settings_.empty()) WritePrivateProfileStringW(L"pet", L"sound", soundEnabled_ ? L"1" : L"0", settings_.c_str());
     SetWindowTextW(sound_, soundEnabled_ ? L"音效开" : L"音效关");
     InvalidateRect(sound_, nullptr, FALSE);
-    if (soundEnabled_) playChime(false);
+    if (soundEnabled_) meow(GetTickCount64(), true);
     else PlaySoundW(nullptr, nullptr, 0);
   }
 
@@ -440,12 +447,10 @@ private:
     playUntil_ = now + (bellyRub ? 1500 : 950);
     sparkAt_ = now;
     rub_ = bellyRub;
+    stretchAt_ = 0;
     path_.clear();
     nextRoam_ = std::max(nextRoam_, playUntil_ + 2200);
-    if (now >= nextPlaySound_) {
-      playChime(false);
-      nextPlaySound_ = now + 1400;
-    }
+    if (bellyRub) meow(now);
   }
 
   void chooseRoute(float dpi) {
@@ -464,11 +469,11 @@ private:
     path_.assign(points.begin(), points.end());
   }
 
-  void stepMotion(Point goal, double maxDistance) {
+  void stepMotion(Point goal, double dt, double limit, bool arriving) {
     const Point vector = goal - pos_;
     const double remaining = length(vector);
     if (remaining < .1) return;
-    const double distance = std::min(remaining, maxDistance);
+    const double distance = walkingStep(remaining, dt, limit, arriving, walkSpeed_);
     if (std::abs(vector.x) > 3) facingRight_ = vector.x > 0;
     pos_ = pos_ + vector * (distance / remaining);
     walkPixels_ += distance / scale();
@@ -493,7 +498,7 @@ private:
       return;
     }
     hoverAt_ = 0;
-    if (toast_ || now < playUntil_) return;
+    if (toast_ || now < playUntil_ || (stretchAt_ && now - stretchAt_ < 1350)) return;
 
     const Point center = pos_ - Point{0, 60 * dpi};
     const double cursorDistance = length(mouse - center);
@@ -505,12 +510,13 @@ private:
       if (cursorDistance < 63 * dpi || length(goal - pos_) < 9 * dpi) {
         facingRight_ = mouse.x > center.x;
         play(now);
+        meow(now);
         catchAt_ = now;
         catchPoint_ = mouse;
         chaseAfter_ = now + 2100;
       } else {
         path_.clear();
-        stepMotion(goal, dt * 215 * dpi);
+        stepMotion(goal, dt, 215 * dpi, true);
       }
       return;
     }
@@ -520,9 +526,12 @@ private:
     while (!path_.empty() && length(path_.front() - pos_) <= 3 * dpi) {
       pos_ = path_.front();
       path_.pop_front();
-      if (path_.empty()) nextRoam_ = now + (activity_ == "working" ? 1900 : 4700);
+      if (path_.empty()) {
+        nextRoam_ = now + (activity_ == "working" ? 1900 : 4700);
+        if (activity_ == "idle" && roamCount_ % 3 == 0) stretchAt_ = now;
+      }
     }
-    if (!path_.empty()) stepMotion(path_.front(), dt * (activity_ == "working" ? 116 : 88) * dpi);
+    if (!path_.empty()) stepMotion(path_.front(), dt, (activity_ == "working" ? 116 : 88) * dpi, path_.size() == 1);
   }
 
   std::wstring activityLabel() const {
@@ -544,56 +553,40 @@ private:
       toast_ = toasts_.front();
       toasts_.pop_front();
       toastUntil_ = now + 4600;
-      if (toast_->outcome == "completed") playChime(true);
+      if (toast_->outcome == "completed") playFinishSound(now);
     }
     movement(now, dt, pointer(), scale());
+    if (!walking_) walkSpeed_ = 0;
     paintActor(now);
   }
 
   void paintActor(ULONGLONG now) {
     const float dpi = scale();
     const auto seconds = static_cast<double>(now - start_) / 1000;
-    SpriteId sprite = idle;
-    bool mirror = false;
-    float width = 158, height = 142;
-    float lift = static_cast<float>(std::sin(seconds * 2.5) * 1.25);
+    Action action = Action::sit;
+    double age = 0;
     if (now < playUntil_) {
-      sprite = rub_ ? belly : pawUp;
-      mirror = !rub_ && facingRight_;
-      width = rub_ ? 188 : 158;
-      height = rub_ ? 114 : 144;
-      lift += static_cast<float>(std::sin(seconds * 12) * 2.4);
+      action = rub_ ? Action::roll : Action::reach;
+      age = static_cast<double>(now - sparkAt_) / 1000;
     } else if (toast_) {
-      sprite = toast_->outcome == "completed" ? belly : curious;
-      width = 188;
-      height = 126;
-      const double age = static_cast<double>(4600 - (toastUntil_ - now)) / 1000;
-      if (age < .7) lift -= static_cast<float>(14 * std::abs(std::sin(age * 4.5)));
-    } else if (walking_) {
-      sprite = static_cast<SpriteId>(walk1 + static_cast<int>(walkPixels_ / 11) % 4);
-      mirror = facingRight_;
-      width = 207;
-      height = 119;
-      lift -= static_cast<float>(2 * std::abs(std::sin(walkPixels_ / 11 * 1.57)));
-    } else if (activity_ == "working") {
-      sprite = crouch;
-      width = 179;
-      height = 104;
-    } else if (activity_ == "thinking") {
-      sprite = curious;
-    } else if ((startIdle_ && now - startIdle_ > 17000) || (demo_ && (now - start_) % 26000 > 18800)) {
-      sprite = sleep;
-      width = 173;
-      height = 97;
-    }
+      action = toast_->outcome == "completed" ? Action::celebrate : Action::notice;
+      age = static_cast<double>(4600 - (toastUntil_ - now)) / 1000;
+    } else if (walking_) action = Action::walk;
+    else if (stretchAt_ && now - stretchAt_ < 1350) {
+      action = Action::stretch;
+      age = static_cast<double>(now - stretchAt_) / 1000;
+    } else if (activity_ == "working") action = Action::work;
+    else if (activity_ == "thinking") action = Action::look;
+    else if ((startIdle_ && now - startIdle_ > 17000) || (demo_ && (now - start_) % 26000 > 18800)) action = Action::sleep;
+    const auto pose = poses_.sample(catPose(action, seconds, age, walkPixels_, facingRight_), seconds);
     constexpr int actorWidth = 232, actorHeight = 178;
     const int x = roundedInt(pos_.x - actorWidth * dpi / 2);
     const int y = roundedInt(pos_.y - (actorHeight - 7) * dpi);
     actorSurface_.present(actor_, x, y, roundedInt(actorWidth * dpi), roundedInt(actorHeight * dpi), dpi, true,
       [&](gd::Graphics& g) {
-        drawSprite(g, *sprites_[sprite], {(actorWidth - width) / 2, actorHeight - 7 - height + lift, width, height}, mirror);
+        drawPose(g, *sprites_[pose.sprite], pose, actorWidth / 2, actorHeight - 7);
       });
-    paintEffects(now, dpi, sprite, seconds);
+    paintEffects(now, dpi, pose.sprite, seconds);
   }
 
   void paintEffects(ULONGLONG now, float dpi, SpriteId sprite, double seconds) {
@@ -625,7 +618,7 @@ private:
           const float beat = static_cast<float>(std::sin(seconds * 6) * 1.0);
           oval(g, {89 - beat / 2, top + 11 - beat / 2, 6 + beat, 6 + beat}, jade);
           label(g, activityLabel() + count, {101, top, 105, 28}, 12, jade, true);
-        } else if (sprite == sleep) {
+        } else if (sprite == sleepPose) {
           label(g, L"z z z", {center + 31, 107 + static_cast<float>(std::sin(seconds * 2) * 4), 52, 24}, 15, jade, true);
         }
         if (sparkAt_ && now - sparkAt_ < 1250) {
@@ -756,6 +749,7 @@ private:
     HMENU actions = CreatePopupMenu();
     AppendMenuW(actions, MF_STRING, showBalance, L"余额与最近任务");
     AppendMenuW(actions, MF_STRING, petCat, L"摸摸猫");
+    AppendMenuW(actions, MF_STRING, stretchPet, L"伸懒腰");
     AppendMenuW(actions, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(actions, MF_STRING | (roam_ ? MF_CHECKED : MF_UNCHECKED), toggleRoam, L"桌面巡游");
     AppendMenuW(actions, MF_STRING | (chase_ ? MF_CHECKED : MF_UNCHECKED), toggleChase, L"追光标");
@@ -773,6 +767,13 @@ private:
     switch (command) {
       case showBalance: openPanel(); break;
       case petCat: showPet(); play(GetTickCount64(), true); break;
+      case stretchPet:
+        showPet();
+        path_.clear();
+        playUntil_ = 0;
+        stretchAt_ = GetTickCount64();
+        nextRoam_ = std::max(nextRoam_, stretchAt_ + 2200);
+        break;
       case toggleRoam: roam_ = !roam_; path_.clear(); break;
       case toggleChase: chase_ = !chase_; break;
       case toggleSound: toggleChime(); break;
@@ -791,7 +792,10 @@ private:
     const bool click = pressed_ && !dragged_ && length(pointer() - pressPoint_) < 6 * scale();
     pressed_ = false;
     if (GetCapture() == actor_) ReleaseCapture();
-    if (click) openPanel();
+    if (click) {
+      meow(GetTickCount64());
+      openPanel();
+    }
   }
 
   LRESULT dispatch(HWND window, UINT message, WPARAM wp, LPARAM lp) {
@@ -877,13 +881,14 @@ private:
   bool roam_{true}, chase_{true}, walking_{}, facingRight_{}, pressed_{}, dragged_{}, rub_{};
   bool soundEnabled_{};
   int sizePercent_{100};
-  std::wstring settings_;
-  double panelScale_{1}, walkPixels_{};
+  std::wstring settings_, meowPath_;
+  double panelScale_{1}, walkPixels_{}, walkSpeed_{};
+  PoseAnimator poses_;
   unsigned roamCount_{};
   Point pos_{}, lastPointer_{}, pressPoint_{}, pressOffset_{}, catchPoint_{};
   ULONGLONG start_{}, lastTick_{}, nextRoam_{}, lastMove_{}, startIdle_{};
   ULONGLONG hoverAt_{}, playUntil_{}, sparkAt_{}, catchAt_{}, chaseAfter_{}, toastUntil_{}, demoCycle_{~0ULL};
-  ULONGLONG saveSizeAt_{}, nextPlaySound_{};
+  ULONGLONG saveSizeAt_{}, nextMeow_{}, stretchAt_{};
   std::vector<Screen> screens_;
   std::deque<Point> path_;
   std::mt19937 random_{std::random_device{}()};

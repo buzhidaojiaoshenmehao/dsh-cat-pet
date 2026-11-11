@@ -1,4 +1,5 @@
 #include "../native/geometry.hpp"
+#include "../native/animation.hpp"
 #include "../native/protocol.hpp"
 #include "../native/sounds.hpp"
 #include "../native/tariff.hpp"
@@ -48,4 +49,23 @@ int main() {
   assert(wave.size() == 44 + 24 * (68 + 115) * 2);
   assert(std::string_view(reinterpret_cast<const char*>(wave.data()), 4) == "RIFF");
   assert(std::string_view(reinterpret_cast<const char*>(wave.data() + 36), 4) == "data");
+
+  PoseAnimator animation;
+  const auto seated = catPose(Action::sit, 0, 0, 0, false);
+  const auto stride = catPose(Action::walk, 0, 0, 0, true);
+  assert(animation.sample(seated, 0).width == seated.width);
+  const auto beginning = animation.sample(stride, 1);
+  assert(beginning.sprite == walk1 && beginning.width == seated.width);
+  const auto middleFrame = catPose(Action::walk, .085, 0, 5, true);
+  const auto halfway = animation.sample(middleFrame, 1.085);
+  assert(halfway.sprite == walk1a && halfway.width > seated.width && halfway.width < stride.width);
+  assert(animation.sample(stride, 1.20).width == stride.width);
+  const auto stretching = catPose(Action::stretch, 0, .675, 0, false);
+  assert(stretching.stretchX > 1 && stretching.stretchY < 1);
+  assert(spriteBounds(500, 330, stretching, 140, 160).bottom == 160);
+  assert(catPose(Action::sit, 3.82, 0, 0, false).blink > .95);
+  double speed = 0;
+  assert(walkingStep(100, .016, 88, true, speed) < .5);
+  speed = 88;
+  assert(walkingStep(.5, .016, 88, true, speed) == .5 && speed < 88);
 }

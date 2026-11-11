@@ -7,7 +7,7 @@
 支持 macOS 13 或更新版本，包括 Apple 芯片和 Intel Mac。至少打开过一次 DeepSeek Harness Desktop 后，用 `⌘Q` 退出，再在终端运行以下命令。
 
 ```sh
-'/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh' plugin --profile desktop add 'https://github.com/buzhidaojiaoshenmehao/dsh-cat-pet/releases/download/v0.3.0/dsh-cat-pet-0.3.0.tgz'
+'/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh' plugin --profile desktop add 'https://github.com/buzhidaojiaoshenmehao/dsh-cat-pet/releases/download/v0.4.0/dsh-cat-pet-0.4.0.tgz'
 ```
 
 重新打开 Harness 后，小爪同伴会随插件启动。点击菜单栏的脚印可以打开面板、召回、隐藏或退出桌宠。Harness 安装在其他位置时，将命令里的应用路径改成实际位置。
@@ -19,7 +19,7 @@
 3. 在解压目录打开 PowerShell，运行下面的命令，再重新打开 Harness。桌宠会随插件启动。
 
 ```powershell
-dsh plugin --profile desktop add .\dsh-cat-pet-0.3.0.tgz
+dsh plugin --profile desktop add .\dsh-cat-pet-0.4.0.tgz
 ```
 
 如果终端找不到 `dsh`，在 Harness 的应用菜单启用“管理 dsh 命令”，或直接调用 Harness 安装目录中的 `resources\runtime\cli\bin\dsh.cmd`，传入相同参数。
@@ -35,10 +35,10 @@ dsh plugin --profile desktop add .\dsh-cat-pet-0.3.0.tgz
 | 左键点猫 | 打开面板，查看余额、峰谷倒计时、最近任务与设置 |
 | 按住拖动 | 把猫搬到桌面上的其他位置 |
 | 拖动面板里的大小滑杆 | 以 1% 为步长在 50%–180% 之间实时缩放 |
-| 点面板里的音效按钮 | 切换逗猫和任务完成提示音，默认关闭 |
-| 右键点猫，或打开 macOS 菜单栏或 Windows 托盘里的脚印 | 摸摸猫、切换音效、巡游与追光标、叫到当前屏幕、隐藏或退出 |
+| 打开音效 | 点击猫、摸猫或扑到光标时会听到一声猫叫，任务完成仍会播放提示音 |
+| 右键点猫，或打开 macOS 菜单栏或 Windows 托盘里的脚印 | 摸摸猫、让猫伸懒腰、切换音效和巡游、叫到当前屏幕、隐藏或退出 |
 
-思考时猫会侧头，执行工具时猫会蹲下或踱步，闲置时会趴睡。任务结束会短暂弹出 Token 和预估金额。并行任务分别结算，最近一单可以在余额面板里回看。
+走路会缓慢起步和停下，步态由 12 帧连成循环。猫在静坐时会眨眼、呼吸，偶尔伸懒腰。思考时猫会侧头，执行工具时会蹲下或踱步，闲置时会趴睡。任务结束会短暂弹出 Token 和预估金额。并行任务分别结算，最近一单可以在余额面板里回看。音效默认关闭，开启时会试听一声猫叫。 [音频来源](assets/AUDIO.md)
 
 峰谷倒计时每秒更新，显示当前高峰或空闲时段、剩余时间和下一次切换的北京时间。计费和倒计时共用同一份 2026–2027 年日历，覆盖午间、周末和节假日。日历用完时面板会提示更新。macOS 将大小和音效写入系统偏好设置，Windows 保存在 `%LOCALAPPDATA%\dsh-cat-pet\settings.ini`。
 
@@ -74,6 +74,6 @@ npm run build:windows
 node scripts/package.mjs
 ```
 
-从两张透明图集切出素材需要 `ffmpeg` 和 `ffprobe`。构建时可用 `PAW_ZIG` 指定 Zig 路径。构建后可以从项目目录运行 `open bin/macos/LittlePaw.app` 体验演示。图集和提示词见 [动作素材说明](assets/PROMPTS.md)。
+切分透明图集需要 `ffmpeg` 和 `ffprobe`。修改走路图集并重新切分后，可用装有 `opencv-python-headless` 的 Python 运行 `python scripts/prepare-walk.py` 重新生成中间帧。构建时可用 `PAW_ZIG` 指定 Zig 路径。构建后可以从项目目录运行 `open bin/macos/LittlePaw.app` 体验演示。图集和提示词见 [动作素材说明](assets/PROMPTS.md)。
 
 官方资料：[插件安装](https://deepseek-harness.github.io/deepseek-harness/en/develop/basic/publish) · [桌面版命令](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.1/apps/desktop/README.md) · [余额接口](https://api-docs.deepseek.com/api/get-user-balance/) · [人民币价格](https://api-docs.deepseek.com/zh-cn/quick_start/pricing/) · [美元价格](https://api-docs.deepseek.com/quick_start/pricing/) · [2026 年假期](https://sousuo.www.gov.cn/zcwjk/policyDocumentLibrary?q=2026&t=zhengcelibrary) · [2027 年假期](https://www.gov.cn/zhengce/content/202611/content_7085101.htm)

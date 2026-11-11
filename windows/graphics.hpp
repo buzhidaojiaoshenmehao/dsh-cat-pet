@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <gdiplus.h>
 
+#include "animation.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -153,6 +154,39 @@ inline void drawSprite(gd::Graphics& g, gd::Bitmap& image, gd::RectF box, bool m
   g.TranslateTransform(destination.X * 2 + destination.Width, 0);
   g.ScaleTransform(-1, 1);
   g.DrawImage(&image, destination);
+  g.Restore(saved);
+}
+
+inline void drawPose(gd::Graphics& g, gd::Bitmap& image, const Pose& pose, double center, double feet) {
+  const auto bounds = spriteBounds(image.GetWidth(), image.GetHeight(), pose, center, feet);
+  const gd::RectF frame(float(bounds.left), float(bounds.top), float(bounds.width()), float(bounds.height()));
+  const auto saved = g.Save();
+  if (pose.mirrored) {
+    g.TranslateTransform(frame.X * 2 + frame.Width, 0);
+    g.ScaleTransform(-1, 1);
+  }
+  g.DrawImage(&image, frame);
+
+  if (pose.blink > 0) {
+    for (const auto& eye : eyesFor(pose.sprite)) {
+      const float x = frame.X + float(eye.x) * frame.Width, y = frame.Y + float(eye.y) * frame.Height;
+      const float rx = float(eye.radiusX) * frame.Width, ry = float(eye.radiusY) * frame.Height;
+      const gd::RectF lid(x - rx, y - ry, 2 * rx, 2 * ry);
+      const auto eyeState = g.Save();
+      gd::GraphicsPath outline;
+      outline.AddEllipse(lid);
+      g.SetClip(&outline, gd::CombineModeIntersect);
+      g.SetClip(gd::RectF(lid.X, lid.Y, lid.Width, lid.Height * float(pose.blink)), gd::CombineModeIntersect);
+      g.DrawImage(&image, gd::RectF(frame.X, frame.Y + 2.2f * ry, frame.Width, frame.Height));
+      g.Restore(eyeState);
+      if (pose.blink > .72) {
+        const auto alpha = static_cast<BYTE>(178 * smoothStep((pose.blink - .72) / .28));
+        gd::Pen seam(gd::Color(alpha, 33, 33, 33), .8f);
+        g.DrawBezier(&seam, x - .8f * rx, y, x - .3f * rx, y + .32f * ry,
+          x + .3f * rx, y + .32f * ry, x + .8f * rx, y);
+      }
+    }
+  }
   g.Restore(saved);
 }
 
