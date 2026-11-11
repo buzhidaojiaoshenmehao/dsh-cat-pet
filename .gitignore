@@ -2,6 +2,7 @@
 /.build/
 /node_modules/
 /bin/win-*/LittlePaw.exe
+/bin/macos/LittlePaw.app/
 .DS_Store
 .env
 .env.*

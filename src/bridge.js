@@ -3,17 +3,22 @@ import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { createInterface } from 'node:readline'
 
-const inheritedEnvironment = new Set(['systemroot', 'windir', 'temp', 'tmp', 'localappdata', 'userprofile'])
+const windowsEnvironment = new Set(['systemroot', 'windir', 'temp', 'tmp', 'localappdata', 'userprofile'])
+const macosEnvironment = new Set(['home', 'tmpdir', 'lang', 'lc_all', 'lc_ctype'])
 
 export function startPet(onRequest, warn) {
   const arch = process.arch === 'arm64' ? 'arm64' : process.arch === 'x64' ? 'x64' : undefined
-  const path = arch && fileURLToPath(new URL(`../bin/win-${arch}/LittlePaw.exe`, import.meta.url))
+  const macos = process.platform === 'darwin'
+  const os = macos ? 'macOS' : 'Windows'
+  const executable = macos ? 'macos/LittlePaw.app/Contents/MacOS/LittlePaw' : `win-${arch}/LittlePaw.exe`
+  const path = arch && fileURLToPath(new URL(`../bin/${executable}`, import.meta.url))
   if (!path || !existsSync(path)) {
-    warn('Windows desktop cat binary is missing or this CPU is unsupported.')
+    warn(`${os} desktop cat binary is missing or this CPU is unsupported.`)
     return { send() {}, stop() {} }
   }
 
-  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => inheritedEnvironment.has(key.toLowerCase())))
+  const allowed = macos ? macosEnvironment : windowsEnvironment
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => allowed.has(key.toLowerCase())))
   let child
   let restart
   let stopped = false
@@ -33,7 +38,7 @@ export function startPet(onRequest, warn) {
     const processHandle = spawn(path, ['--bridge'], { stdio: ['pipe', 'pipe', 'ignore'], env, windowsHide: true })
     child = processHandle
     processHandle.stdin.on('error', () => {})
-    processHandle.on('error', () => warn('Windows desktop cat could not start.'))
+    processHandle.on('error', () => warn(`${os} desktop cat could not start.`))
     const lines = createInterface({ input: processHandle.stdout, crlfDelay: Infinity })
     lines.on('line', line => {
       if (stopped) return
@@ -45,9 +50,17 @@ export function startPet(onRequest, warn) {
       child = undefined
       if (stopped) return
       failures = Date.now() - started > 60000 ? 0 : failures + 1
-      if (failures <= 2) restart = setTimeout(launch, 1500 * Math.max(failures, 1))
-      else warn('Windows desktop cat exited repeatedly. Restart Harness to try again.')
+      if (failures <= 2) {
+        restart = setTimeout(launch, 1500 * Math.max(failures, 1))
+        restart.unref()
+      }
+      else warn(`${os} desktop cat exited repeatedly. Restart Harness to try again.`)
     })
+    // A short-lived Harness command can finish while the companion is still visible.
+    // The companion exits on EOF when the host closes its end of the pipe.
+    processHandle.unref()
+    processHandle.stdin.unref?.()
+    processHandle.stdout.unref?.()
     send('hello\t1\n')
     send(activity)
     if (task) send(task.replace(/^task\t/, 'recent\t'))

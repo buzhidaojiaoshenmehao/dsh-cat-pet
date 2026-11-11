@@ -8,7 +8,7 @@ export const name = 'cat-pet'
 export const inject = ['sessions']
 
 export function apply(ctx, config = {}) {
-  if (process.platform !== 'win32' || config.enabled === false) return
+  if (!['win32', 'darwin'].includes(process.platform) || config.enabled === false) return
   const lifetime = new AbortController()
   const connection = createConnectionReader(ctx)
   let querying = false

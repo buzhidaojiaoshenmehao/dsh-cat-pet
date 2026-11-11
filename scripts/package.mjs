@@ -7,10 +7,12 @@ import { createHash } from 'node:crypto'
 const root = fileURLToPath(new URL('../', import.meta.url))
 const { name, version } = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
 const dist = join(root, 'dist')
+const macExecutable = 'bin/macos/LittlePaw.app/Contents/MacOS/LittlePaw'
 mkdirSync(dist, { recursive: true })
 for (const arch of ['x64', 'arm64']) {
   if (!existsSync(join(root, 'bin', `win-${arch}`, 'LittlePaw.exe'))) throw new Error(`Build win-${arch} first`)
 }
+if (!existsSync(join(root, macExecutable))) throw new Error('Build macOS first')
 for (const sprite of ['idle', 'curious', 'paw', 'sleep', 'belly', 'crouch', 'walk-1', 'walk-2', 'walk-3', 'walk-4']) {
   if (!existsSync(join(root, 'bin', 'assets', `${sprite}.png`))) throw new Error(`Missing sprite ${sprite}`)
 }
@@ -18,7 +20,10 @@ for (const sprite of ['idle', 'curious', 'paw', 'sleep', 'belly', 'crouch', 'wal
 const stage = mkdtempSync(join(dist, '.pack-'))
 const archive = join(dist, `LittlePaw-DeepSeek-Harness-Windows-${version}.zip`)
 try {
-  const [{ filename }] = JSON.parse(execFileSync('npm', ['pack', '--json', '--pack-destination', stage], { cwd: root }))
+  const [{ filename, files }] = JSON.parse(execFileSync('npm', ['pack', '--json', '--pack-destination', stage], { cwd: root }))
+  if (!(files.find(file => file.path === macExecutable)?.mode & 0o111)) {
+    throw new Error('The plugin archive must contain an executable macOS desktop cat')
+  }
   const tarball = join(stage, filename)
   const folder = join(stage, 'LittlePaw-DeepSeek-Harness')
   mkdirSync(folder)
@@ -26,7 +31,10 @@ try {
   copyFileSync(join(root, 'README.md'), join(folder, 'README.md'))
   mkdirSync(join(folder, 'assets'))
   copyFileSync(join(root, 'assets', 'PROMPTS.md'), join(folder, 'assets', 'PROMPTS.md'))
-  cpSync(join(root, 'bin'), join(folder, 'bin'), { recursive: true, filter: path => !path.endsWith('.DS_Store') })
+  for (const directory of ['assets', 'win-x64', 'win-arm64']) {
+    cpSync(join(root, 'bin', directory), join(folder, 'bin', directory),
+      { recursive: true, filter: path => !path.endsWith('.DS_Store') })
+  }
   writeFileSync(join(folder, 'preview.cmd'), [
     '@echo off',
     'setlocal',

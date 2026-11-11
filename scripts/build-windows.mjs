@@ -1,8 +1,8 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { tariffTransitions } from '../src/pricing.js'
+import { writePricingCalendar } from './pricing-calendar.mjs'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
 const compiler = process.env.PAW_ZIG || 'zig'
@@ -10,18 +10,7 @@ const architectures = process.argv.slice(2)
 if (!architectures.length) architectures.push('x64', 'arm64')
 const targets = { x64: ['x86_64-windows-gnu', 0x8664], arm64: ['aarch64-windows-gnu', 0xaa64] }
 const generated = join(root, '.build')
-const periodNames = { peak: 'peak', 'off-peak': 'offPeak' }
-mkdirSync(generated, { recursive: true })
-writeFileSync(join(generated, 'pricing-calendar.hpp'), [
-  '// Generated from src/pricing.js by scripts/build-windows.mjs.',
-  '#pragma once',
-  'namespace paw {',
-  'inline constexpr TariffTransition tariffCalendar[] = {',
-  ...tariffTransitions().map(({ at, period }) => `  {${at}LL, Period::${periodNames[period] ?? 'unknown'}},`),
-  '};',
-  '}',
-  '',
-].join('\n'))
+writePricingCalendar(generated)
 
 for (const architecture of architectures) {
   if (!Object.hasOwn(targets, architecture)) throw new Error(`Unsupported Windows architecture: ${architecture}`)
@@ -31,7 +20,7 @@ for (const architecture of architectures) {
   mkdirSync(directory, { recursive: true })
   execFileSync(compiler, ['c++', '-target', target, '-std=c++20', '-O2', '-s', '-municode',
     '-Wl,--subsystem,windows', '-D_WIN32_WINNT=0x0a00', '-Wall', '-Wextra', '-Wno-missing-field-initializers',
-    '-I', generated, 'windows/main.cpp', '-lgdiplus', '-lgdi32', '-luser32', '-lshell32',
+    '-I', generated, '-I', 'native', 'windows/main.cpp', '-lgdiplus', '-lgdi32', '-luser32', '-lshell32',
     '-lcomctl32', '-lwinmm', '-o', output], { cwd: root, stdio: 'inherit' })
   const pe = readFileSync(output)
   const header = pe.readUInt32LE(0x3c)

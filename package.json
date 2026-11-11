@@ -1,7 +1,7 @@
 {
   "name": "dsh-cat-pet",
-  "version": "0.2.0",
-  "description": "小爪同伴 · Windows 桌宠、DeepSeek 余额、任务用量与峰谷倒计时",
+  "version": "0.3.0",
+  "description": "小爪同伴 · macOS 与 Windows 桌宠、DeepSeek 余额、任务用量与峰谷倒计时",
   "type": "module",
   "main": "./src/index.js",
   "exports": {
@@ -11,11 +11,12 @@
     "./locale/en.json": "./locale/en.json"
   },
   "files": ["src/", "bin/", "locale/", "cordis.patch.yml", "README.md", "assets/PROMPTS.md"],
-  "keywords": ["dsh-plugin", "deepseek-harness", "windows", "desktop-pet"],
+  "keywords": ["dsh-plugin", "deepseek-harness", "windows", "macos", "desktop-pet"],
   "engines": { "dsh": ">=0.2.2-rc.1 <0.3.0", "node": ">=24.9.0" },
   "dsh": { "bundle": { "patch": "./cordis.patch.yml" } },
   "scripts": {
     "test": "node --test tests/*.test.js",
-    "build:windows": "node scripts/build-windows.mjs"
+    "build:windows": "node scripts/build-windows.mjs",
+    "build:macos": "node scripts/build-macos.mjs"
   }
 }

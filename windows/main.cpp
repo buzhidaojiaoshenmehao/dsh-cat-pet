@@ -391,21 +391,15 @@ private:
     if (!linked_) return true;
     if (f[0] == "activity" && f.size() == 3) {
       setActivity(f[1], f[2]);
-    } else if ((f[0] == "task" || f[0] == "recent") && f.size() == 14) {
-      Task task{f[1], f[2], f[3], f[4], f[5], f[6], f[7], f[8], f[9], f[13], f[10] == "1"};
-      acceptTask(task, f[0] == "task");
-    } else if (f[0] == "balance" && f.size() >= 2) {
-      Balance next;
-      next.status = f[1];
-      if (f[1] == "ready" && (f.size() == 8 || f.size() == 12)) {
-        next.mode = f[2];
-        next.available = f[3];
-        for (size_t i = 4; i + 3 < f.size(); i += 4) next.wallets.push_back({f[i], f[i + 1], f[i + 2], f[i + 3]});
-        GetLocalTime(&balanceTime_);
-      }
+    } else if (f[0] == "task" || f[0] == "recent") {
+      if (const auto task = parseTask(f)) acceptTask(*task, f[0] == "task");
+    } else if (f[0] == "balance") {
+      auto next = parseBalance(f);
+      if (!next) return true;
+      if (next->status == "ready") GetLocalTime(&balanceTime_);
       // Keep the last currency for the task receipt while refreshing the balance.
-      if (next.status == "loading") balance_.status = next.status;
-      else balance_ = std::move(next);
+      if (next->status == "loading") balance_.status = next->status;
+      else balance_ = std::move(*next);
       InvalidateRect(panel_, nullptr, FALSE);
     }
     return true;
@@ -655,22 +649,6 @@ private:
       });
   }
 
-  std::wstring tokenText(const Task& task) const {
-    if (task.total == "-") return L"用量未返回";
-    return (task.incomplete ? L"已知 " : L"") + grouped(task.total) + L" Token";
-  }
-
-  std::wstring balanceMessage() const {
-    if (balance_.status == "loading") return L"查询余额中…";
-    if (balance_.status == "sign_in") return L"请先在 Harness 中登录 DeepSeek 账号";
-    if (balance_.status == "no_key") return L"请在 Harness 的模型设置中配置 API Key";
-    if (balance_.status == "auth") return L"DeepSeek 拒绝了 API Key，请检查模型设置";
-    if (balance_.status == "custom") return L"当前为自定义端点，请到服务商查看余额";
-    if (balance_.status == "empty") return L"当前账号没有可显示的钱包";
-    if (balance_.status == "idle") return L"点刷新查询余额";
-    return L"余额查询失败，可点刷新重试";
-  }
-
   void paintTariff(gd::Graphics& g) const {
     const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::system_clock::now().time_since_epoch()).count();
@@ -725,7 +703,7 @@ private:
         label(g, source + L"  ·  " + stamp + (balance_.available == "0" ? L"  ·  余额不足" : L""),
           {29, 177, 320, 17}, 10, quiet);
       } else {
-        label(g, balanceMessage(), {29, 114, 322, 52}, 13, quiet);
+        label(g, balanceMessage(balance_.status), {29, 114, 322, 52}, 13, quiet);
       }
 
       paintTariff(g);

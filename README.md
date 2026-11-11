@@ -1,6 +1,16 @@
 # 小爪同伴
 
-给 DeepSeek Harness 做的 Windows 桌宠，形象来自你的猫。它在桌面和其他普通窗口上方巡游，可以沿相邻显示器继续走。猫身以外的透明区域可以点到下方应用。
+给 DeepSeek Harness 做的 macOS 和 Windows 桌宠。它会在桌面巡游，随任务切换动作。点击猫可以查看余额、峰谷倒计时、最近任务的 Token 和预估费用。
+
+## 在 macOS 安装
+
+支持 macOS 13 或更新版本，包括 Apple 芯片和 Intel Mac。至少打开过一次 DeepSeek Harness Desktop 后，用 `⌘Q` 退出，再在终端运行以下命令。
+
+```sh
+'/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh' plugin --profile desktop add 'https://github.com/buzhidaojiaoshenmehao/dsh-cat-pet/releases/download/v0.3.0/dsh-cat-pet-0.3.0.tgz'
+```
+
+重新打开 Harness 后，小爪同伴会随插件启动。点击菜单栏的脚印可以打开面板、召回、隐藏或退出桌宠。Harness 安装在其他位置时，将命令里的应用路径改成实际位置。
 
 ## 在 Windows 安装
 
@@ -9,12 +19,12 @@
 3. 在解压目录打开 PowerShell，运行下面的命令，再重新打开 Harness。桌宠会随插件启动。
 
 ```powershell
-dsh plugin --profile desktop add .\dsh-cat-pet-0.2.0.tgz
+dsh plugin --profile desktop add .\dsh-cat-pet-0.3.0.tgz
 ```
 
 如果终端找不到 `dsh`，在 Harness 的应用菜单启用“管理 dsh 命令”，或直接调用 Harness 安装目录中的 `resources\runtime\cli\bin\dsh.cmd`，传入相同参数。
 
-目标宿主为官方 DeepSeek Harness `0.2.2-rc.1`。包内带 Windows x64 和 ARM64 的桌宠程序与素材，安装时无需编译。Windows ARM64 上运行 x64 版 Harness 时，插件随宿主选择 x64 桌宠。Windows 10/11 需要支持每显示器 DPI 感知的版本。
+已在官方 DeepSeek Harness `0.2.2-rc.1` 上验证安装。同一个 `.tgz` 包含 macOS 通用程序、Windows x64 和 ARM64 程序及素材，安装时无需编译。Windows ARM64 上运行 x64 版 Harness 时，插件随宿主选择 x64 桌宠。Windows 10/11 需要支持每显示器 DPI 感知的版本。
 
 ## 逗猫与账单
 
@@ -26,11 +36,11 @@ dsh plugin --profile desktop add .\dsh-cat-pet-0.2.0.tgz
 | 按住拖动 | 把猫搬到桌面上的其他位置 |
 | 拖动面板里的大小滑杆 | 以 1% 为步长在 50%–180% 之间实时缩放 |
 | 点面板里的音效按钮 | 切换逗猫和任务完成提示音，默认关闭 |
-| 右键点猫或托盘图标 | 摸摸猫、切换音效、巡游与追光标、叫到当前屏幕、隐藏或退出 |
+| 右键点猫，或打开 macOS 菜单栏或 Windows 托盘里的脚印 | 摸摸猫、切换音效、巡游与追光标、叫到当前屏幕、隐藏或退出 |
 
 思考时猫会侧头，执行工具时猫会蹲下或踱步，闲置时会趴睡。任务结束会短暂弹出 Token 和预估金额。并行任务分别结算，最近一单可以在余额面板里回看。
 
-峰谷倒计时每秒更新，显示当前高峰或空闲时段、剩余时间和下一次切换的北京时间。计费和倒计时共用同一份 2026–2027 年日历，覆盖午间、周末和节假日。日历用完时面板会提示更新。大小和音效保存在 `%LOCALAPPDATA%\dsh-cat-pet\settings.ini`。
+峰谷倒计时每秒更新，显示当前高峰或空闲时段、剩余时间和下一次切换的北京时间。计费和倒计时共用同一份 2026–2027 年日历，覆盖午间、周末和节假日。日历用完时面板会提示更新。macOS 将大小和音效写入系统偏好设置，Windows 保存在 `%LOCALAPPDATA%\dsh-cat-pet\settings.ini`。
 
 余额优先使用当前或最近一单的 DeepSeek 路由。登录账号模式读取 Harness 自带的充值和赠送钱包，API Key 模式使用 Harness 已配置的凭证查询 DeepSeek 官方接口。尚无任务时优先查询已登录账号。自定义端点的余额由对应服务商提供。点“刷新”可重新查询，查询失败会显示原因。
 
@@ -40,29 +50,30 @@ dsh plugin --profile desktop add .\dsh-cat-pet-0.2.0.tgz
 
 ## 卸载
 
-从托盘退出 Harness，再运行下列命令。也可以在 Harness 的插件管理中移除“小爪同伴”。
+在 Harness 的插件管理中移除“小爪同伴”。也可以完全退出 Harness 后，使用它自带的 `dsh` 运行下列命令。
 
-```powershell
+```sh
 dsh plugin --profile desktop remove dsh-cat-pet
 ```
 
 ## 验证
 
-已构建 Windows x64 和 ARM64 的 GUI 程序，并检查了压缩包和 PNG 透明度。多屏路径、计费、余额响应和任务归集测试通过。使用官方 Harness `0.2.2-rc.1` 在隔离配置里安装了插件包，实际跑完由模拟模型驱动的两次请求与一次文件读取。完成事件记录了 9,360 Token 和人民币预估费用 ¥0.005968。
+已构建 macOS 通用程序和 Windows x64、ARM64 程序。多屏路径、计费、余额响应和任务归集测试通过。在官方 Harness `0.2.2-rc.1` 的隔离配置中安装插件，用模拟模型测试真实工具和任务事件。
 
-Windows 窗口交互和真实账号余额仍待在 Windows 实机联调。可以先用 `preview.cmd` 检查桌宠窗口、鼠标动作和托盘菜单。
+在 Apple 芯片 Mac 上实测了桌宠窗口、面板、大小滑杆和音效开关。余额与用量通过模拟数据验证。Windows 可先用 `preview.cmd` 检查桌宠窗口、鼠标动作和托盘菜单。
 
 ## 开发
 
-`src/` 是 Harness 插件，`windows/` 是 Win32 桌宠，`bin/` 存放可安装的预编译程序和透明素材。用 Zig 0.14.1 构建 x64 与 ARM64。Windows 源码依赖系统 Win32 和 GDI+，发布包不需要额外的图形运行时。
+`src/` 是 Harness 插件，`macos/` 和 `windows/` 分别使用 AppKit 和 Win32，`native/` 提供共享的路径、计费和协议代码。`bin/` 存放预编译程序和透明素材。完整发布包在装有 Xcode 或 Command Line Tools、Zig 0.14.1、`zip` 和 `unzip` 的 Mac 上构建。
 
 ```sh
 node scripts/prepare-sprites.mjs
 npm test
+npm run build:macos
 npm run build:windows
 node scripts/package.mjs
 ```
 
-从两张透明图集切出素材需要 `ffmpeg` 和 `ffprobe`。构建时可用 `PAW_ZIG` 指定 Zig 路径。最后一步打包命令在装有 `zip` 和 `unzip` 的 macOS 或 Linux 上运行。图集和提示词见 [动作素材说明](assets/PROMPTS.md)。
+从两张透明图集切出素材需要 `ffmpeg` 和 `ffprobe`。构建时可用 `PAW_ZIG` 指定 Zig 路径。构建后可以从项目目录运行 `open bin/macos/LittlePaw.app` 体验演示。图集和提示词见 [动作素材说明](assets/PROMPTS.md)。
 
 官方资料：[插件安装](https://deepseek-harness.github.io/deepseek-harness/en/develop/basic/publish) · [桌面版命令](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.1/apps/desktop/README.md) · [余额接口](https://api-docs.deepseek.com/api/get-user-balance/) · [人民币价格](https://api-docs.deepseek.com/zh-cn/quick_start/pricing/) · [美元价格](https://api-docs.deepseek.com/quick_start/pricing/) · [2026 年假期](https://sousuo.www.gov.cn/zcwjk/policyDocumentLibrary?q=2026&t=zhengcelibrary) · [2027 年假期](https://www.gov.cn/zhengce/content/202611/content_7085101.htm)

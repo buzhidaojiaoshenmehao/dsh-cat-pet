@@ -1,7 +1,7 @@
-#include "../windows/geometry.hpp"
-#include "../windows/protocol.hpp"
-#include "../windows/sounds.hpp"
-#include "../windows/tariff.hpp"
+#include "../native/geometry.hpp"
+#include "../native/protocol.hpp"
+#include "../native/sounds.hpp"
+#include "../native/tariff.hpp"
 #include <cassert>
 
 int main() {
@@ -9,7 +9,7 @@ int main() {
   const std::vector<Screen> screens{
     {{0, 0, 1920, 1080}, {0, 0, 1920, 1040}},
     {{-1280, -180, 0, 720}, {-1280, -180, 0, 680}},
-    {{-1280, 720, 0, 1440}, {-1280, 720, 0, 1400}},
+    {{-1500, 720, -200, 1440}, {-1500, 720, -200, 1400}},
     {{3100, 0, 4100, 900}, {3100, 0, 4100, 860}},
   };
   assert(nearestScreen(screens, {-430, -100}) == 1);
@@ -26,6 +26,11 @@ int main() {
   assert(grouped(task.total) == L"4,680");
   assert(taskPrice(task, balance) == L"预估 $0.000448");
   assert(fields("activity\tthinking\t2").size() == 3);
+  const auto ready = parseBalance(fields("balance\tready\tapi\t1\tCNY\t28.60\t3.60\t25.00\tUSD\t1\t0\t1"));
+  assert(ready && ready->wallets.size() == 2 && ready->wallets[1].currency == "USD");
+  assert(!parseBalance(fields("balance\tready\tapi\t1")));
+  const auto completed = parseTask(fields("recent\tcompleted\tmain\t4680\t4200\t480\t3200\t0.002984\t0.000448\tfull\t0\t0\t1\tapi"));
+  assert(completed && completed->mode == "api" && tokenText(*completed) == L"4,680 Token");
 
   const TariffTransition calendar[]{
     {0, Period::offPeak}, {4000, Period::peak}, {6000, Period::offPeak}, {8000, Period::unknown},
