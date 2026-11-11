@@ -1,0 +1,8 @@
+/dist/
+/.build/
+/node_modules/
+/bin/win-*/LittlePaw.exe
+.DS_Store
+.env
+.env.*
+*.tgz

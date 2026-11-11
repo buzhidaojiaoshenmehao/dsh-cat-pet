@@ -1,0 +1,21 @@
+{
+  "name": "dsh-cat-pet",
+  "version": "0.2.0",
+  "description": "小爪同伴 · Windows 桌宠、DeepSeek 余额、任务用量与峰谷倒计时",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./package.json": "./package.json",
+    "./locale/zh.json": "./locale/zh.json",
+    "./locale/en.json": "./locale/en.json"
+  },
+  "files": ["src/", "bin/", "locale/", "cordis.patch.yml", "README.md", "assets/PROMPTS.md"],
+  "keywords": ["dsh-plugin", "deepseek-harness", "windows", "desktop-pet"],
+  "engines": { "dsh": ">=0.2.2-rc.1 <0.3.0", "node": ">=24.9.0" },
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } },
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "build:windows": "node scripts/build-windows.mjs"
+  }
+}
