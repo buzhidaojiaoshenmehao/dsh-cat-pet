@@ -1,10 +1,15 @@
 #pragma once
 
 #include "geometry.hpp"
+#include <cstdint>
 
 namespace paw {
 
 inline constexpr double bubbleGutter = 14, bubbleRadius = 16, bubbleTailHalfHeight = 10;
+inline constexpr double bubbleWidth = 300, bubbleHeight = 328, bubbleDetailsHeight = 56;
+inline constexpr uint32_t bubbleFill = 0xfaf4ed, bubbleControlsFill = 0xeceee5, bubbleDivider = 0xe0d8cd;
+inline constexpr uint32_t bubblePeak = 0xa62d33, bubblePeakFill = 0xf7deda;
+inline constexpr uint32_t bubbleOffPeak = 0x216344, bubbleOffPeakFill = 0xddefe3;
 
 struct BubbleLayout {
   Rect frame;

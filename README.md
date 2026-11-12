@@ -7,7 +7,7 @@
 支持 macOS 13 或更新版本，包括 Apple 芯片和 Intel Mac。至少打开过一次 DeepSeek Harness Desktop 后，用 `⌘Q` 退出，再在终端运行以下命令。
 
 ```sh
-'/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh' plugin --profile desktop add 'https://github.com/buzhidaojiaoshenmehao/dsh-cat-pet/releases/download/v0.5.0/dsh-cat-pet-0.5.0.tgz'
+'/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh' plugin --profile desktop add 'https://github.com/buzhidaojiaoshenmehao/dsh-cat-pet/releases/download/v0.6.0/dsh-cat-pet-0.6.0.tgz'
 ```
 
 重新打开 Harness 后，小爪同伴会随插件启动。点击菜单栏的脚印可以打开面板、召回、隐藏或退出桌宠。Harness 安装在其他位置时，将命令里的应用路径改成实际位置。
@@ -19,7 +19,7 @@
 3. 在解压目录打开 PowerShell，运行下面的命令，再重新打开 Harness。桌宠会随插件启动。
 
 ```powershell
-dsh plugin --profile desktop add .\dsh-cat-pet-0.5.0.tgz
+dsh plugin --profile desktop add .\dsh-cat-pet-0.6.0.tgz
 ```
 
 如果终端找不到 `dsh`，在 Harness 的应用菜单启用“管理 dsh 命令”，或直接调用 Harness 安装目录中的 `resources\runtime\cli\bin\dsh.cmd`，传入相同参数。
@@ -36,12 +36,14 @@ dsh plugin --profile desktop add .\dsh-cat-pet-0.5.0.tgz
 | 鼠标移进气泡 | 气泡保持打开。离开 5 秒后收起，期间移回会取消计时 |
 | 按住拖动 | 把猫搬到桌面上的其他位置 |
 | 拖动面板里的大小滑杆 | 以 1% 为步长在 50%–180% 之间实时缩放 |
+| 关闭自动巡游 | 停止自动在桌面走动。追光标可在脚印菜单里单独设置 |
 | 打开音效 | 点击猫、摸猫或扑到光标时会听到一声猫叫，任务完成仍会播放提示音 |
+| 点击最近任务右侧箭头 | 展开输入、输出、缓存命中和费用说明 |
 | 右键点猫，或打开 macOS 菜单栏或 Windows 托盘里的脚印 | 摸摸猫、让猫伸懒腰、切换音效和巡游、叫到当前屏幕、隐藏或退出 |
 
 走路时四条腿依次迈步。伸懒腰时，猫会伸出前爪、压低胸口，停一拍再起身。猫在静坐时会眨眼、呼吸，思考时会侧头，执行工具时会蹲下或踱步，闲置时会趴睡。任务结束会短暂弹出 Token 和预估金额。音效默认关闭，开启时会试听一声猫叫。 [音频来源](assets/AUDIO.md)
 
-峰谷倒计时每秒更新，显示当前高峰或空闲时段、剩余时间和下一次切换的北京时间。计费和倒计时共用同一份 2026–2027 年日历，覆盖午间、周末和节假日。日历用完时面板会提示更新。macOS 将大小和音效写入系统偏好设置，Windows 保存在 `%LOCALAPPDATA%\dsh-cat-pet\settings.ini`。
+峰谷倒计时每秒更新。高峰用红色，空闲用绿色，下一次切换时间以北京时间显示。计费和倒计时共用同一份 2026–2027 年日历，覆盖午间、周末和节假日。日历用完时面板会提示更新。macOS 将大小、音效和巡游设置写入系统偏好设置，Windows 保存在 `%LOCALAPPDATA%\dsh-cat-pet\settings.ini`。
 
 余额优先使用当前或最近一单的 DeepSeek 路由。登录账号模式读取 Harness 自带的充值和赠送钱包，API Key 模式使用 Harness 已配置的凭证查询 DeepSeek 官方接口。尚无任务时优先查询已登录账号。自定义端点的余额由对应服务商提供。点“刷新”可重新查询，查询失败会显示原因。
 

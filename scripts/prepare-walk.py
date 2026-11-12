@@ -81,6 +81,18 @@ def warp_leg(image, root, paw, target, stretch, x, y):
     return cv2.remap(image, source_x.astype(np.float32), source_y.astype(np.float32), cv2.INTER_LINEAR)
 
 
+def soften_forepaw(texture, x, y):
+    colors = texture[:, :, :3]
+    alpha = texture[:, :, 3:]
+    luma = cv2.cvtColor(colors, cv2.COLOR_BGR2GRAY)[:, :, None]
+    # The raised paw exposes a warm shadow in the reference. Lift and neutralize
+    # that patch toward the white fur of the other forepaw, keeping its texture.
+    paw = smooth((y - 203) / 30) * (1 - smooth((x - 23) / 41))
+    lifted = luma + np.maximum(0, .84 * alpha - luma) * .72
+    corrected = lifted + .42 * (colors - luma)
+    colors += paw[:, :, None] * (corrected - colors)
+
+
 source = cv2.imread(str(REFERENCE), cv2.IMREAD_UNCHANGED)
 if source is None or source.shape != (283, 540, 4):
     raise RuntimeError("Run scripts/prepare-sprites.mjs to prepare the 540×283 walk reference")
@@ -106,8 +118,9 @@ legs = [
       (146, 255), (157, 229), (162, 204)], (185, 176), (171, 268), .25, 171, 270, 29, 65),
 ]
 textures = [cut(cat, leg[0]) for leg in legs]
-for texture in textures[:2]:
-    texture[:, :, :3] *= .92
+textures[0][:, :, :3] *= .92
+textures[1][:, :, :3] *= .985
+soften_forepaw(textures[1], x, y)
 
 
 def render(phase=None, stretch=0):

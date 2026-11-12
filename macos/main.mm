@@ -264,9 +264,11 @@ NSSound* chime(std::initializer_list<Note> notes) {
 - (void)applicationDidFinishLaunching:(NSNotification*)notification {
   (void)notification;
   _settings = NSUserDefaults.standardUserDefaults;
+  [_settings registerDefaults:@{@"roamEnabled": @YES}];
   _size = [_settings integerForKey:@"sizePercent"];
   if (_size < 50 || _size > 180) _size = 100;
   _sound = [_settings boolForKey:@"soundEnabled"];
+  _roam = [_settings boolForKey:@"roamEnabled"];
   _view = [[PawView alloc] initWithFrame:NSMakeRect(0, 0, actorWidth, actorHeight)];
   _view.controller = self;
   [self collectScreens];
@@ -616,8 +618,9 @@ NSSound* chime(std::initializer_list<Note> notes) {
 - (void)placePanel {
   if (_screens.empty()) return;
   const paw::Rect work = _screens[nearestScreen(_screens, _position)].work;
-  _bubbleLayout = placeBubble(work, _position, pawPanelWidth, pawPanelHeight, 1, [self scale]);
-  [_panel setFrameTopLeftPoint:NSMakePoint(_bubbleLayout.frame.left, -_bubbleLayout.frame.top)];
+  _bubbleLayout = placeBubble(work, _position, bubbleWidth, _panel.bodyHeight, 1, [self scale]);
+  const auto frame = _bubbleLayout.frame;
+  [_panel setFrame:NSMakeRect(frame.left, -frame.bottom, frame.width(), frame.height()) display:YES];
   [_panel setTailOnLeft:_bubbleLayout.tailLeft offset:_bubbleLayout.tailY];
 }
 
@@ -625,8 +628,13 @@ NSSound* chime(std::initializer_list<Note> notes) {
   (void)sender;
   if (_hidden) [self toggleVisible:nil];
   _route.clear();
-  if (!_panel) _panel = [[PawPanel alloc] initWithTarget:self refresh:@selector(refreshBalance:)
-    resize:@selector(resize:) sound:@selector(toggleSound:) menu:_menu];
+  if (!_panel) {
+    NSImage* portrait = [[NSImage alloc] initWithContentsOfURL:[assets() URLByAppendingPathComponent:@"icon.png"]];
+    _panel = [[PawPanel alloc] initWithTarget:self refresh:@selector(refreshBalance:) resize:@selector(resize:)
+      sound:@selector(toggleSound:) roam:@selector(toggleRoam:) details:@selector(toggleTaskDetails:)
+      menu:_menu portrait:portrait];
+  }
+  _panel.taskDetailsExpanded = NO;
   [self placePanel];
   _bubbleHover.opened(uptime());
   _panel.ignoresMouseEvents = !inBubble(_bubbleLayout, pointer());
@@ -637,11 +645,18 @@ NSSound* chime(std::initializer_list<Note> notes) {
 }
 
 - (void)updatePanel {
-  [_panel setActivityText:[NSString stringWithFormat:@"%@  ·  %@", _bridge ? @"DeepSeek Harness" : @"演示数据",
-    [self activityText]]];
+  NSString* activity = [self activityText];
+  [_panel setActivityText:_bridge ? activity : [@"演示 · " stringByAppendingString:activity]];
   [_panel showBalance:_balance];
   [_panel showTask:_recent balance:_balance];
-  [_panel showSize:_size sound:_sound];
+  [_panel showSize:_size sound:_sound roam:_roam];
+}
+
+- (void)toggleTaskDetails:(id)sender {
+  (void)sender;
+  if (!_recent) return;
+  _panel.taskDetailsExpanded = !_panel.taskDetailsExpanded;
+  [self placePanel];
 }
 
 - (void)refreshBalance:(id)sender {
@@ -660,14 +675,14 @@ NSSound* chime(std::initializer_list<Note> notes) {
   [_settings setInteger:_size forKey:@"sizePercent"];
   _route.clear();
   if (!_screens.empty()) _position = safeArea(_screens[nearestScreen(_screens, _position)].work, [self scale]).clamp(_position);
-  [_panel showSize:_size sound:_sound];
+  [_panel showSize:_size sound:_sound roam:_roam];
 }
 
 - (void)toggleSound:(id)sender {
   (void)sender;
   _sound = !_sound;
   [_settings setBool:_sound forKey:@"soundEnabled"];
-  [_panel showSize:_size sound:_sound];
+  [_panel showSize:_size sound:_sound roam:_roam];
   if (_sound) [self meow:YES];
   else [_playingSound stop];
 }
@@ -718,7 +733,13 @@ NSSound* chime(std::initializer_list<Note> notes) {
   _visibilityItem.title = _hidden ? @"显示桌宠" : @"隐藏桌宠";
 }
 - (void)menuDidClose:(NSMenu*)menu { (void)menu; _menuOpen = NO; }
-- (void)toggleRoam:(id)sender { (void)sender; _roam = !_roam; _route.clear(); }
+- (void)toggleRoam:(id)sender {
+  (void)sender;
+  _roam = !_roam;
+  _route.clear();
+  [_settings setBool:_roam forKey:@"roamEnabled"];
+  [_panel showSize:_size sound:_sound roam:_roam];
+}
 - (void)toggleChase:(id)sender { (void)sender; _chase = !_chase; }
 - (void)petCat:(id)sender { (void)sender; if (_hidden) [self toggleVisible:nil]; [self play:YES]; }
 

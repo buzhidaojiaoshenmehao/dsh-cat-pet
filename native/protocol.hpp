@@ -83,6 +83,13 @@ inline std::wstring taskPrice(const Task& task, const Balance& balance) {
   return (task.coverage == "partial" ? L"部分 " : L"预估 ") + money(useUSD ? "USD" : "CNY", value);
 }
 
+inline std::wstring taskCostNote(const Task& task) {
+  if (task.incomplete) return L"部分用量未返回";
+  if (task.coverage == "full") return L"模型费用按官方峰谷价估算";
+  if (task.coverage == "partial") return L"仅显示可计价的模型费用";
+  return L"当前模型费用无可用价格";
+}
+
 inline std::wstring tokenText(const Task& task) {
   if (task.total == "-") return L"用量未返回";
   return (task.incomplete ? L"已知 " : L"") + grouped(task.total) + L" Token";

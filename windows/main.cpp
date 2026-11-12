@@ -24,10 +24,33 @@ constexpr UINT trayMessage = WM_APP + 1;
 constexpr int refreshButton = 100;
 constexpr int closeButton = 101;
 constexpr int soundButton = 102, sizeSlider = 103;
+constexpr int roamButton = 104, actionsButton = 105, taskDetailsButton = 106;
 constexpr UINT_PTR clockTimer = 2;
 constexpr int minSize = 50, maxSize = 180;
-constexpr float panelWidth = 380, panelHeight = 520;
 enum MenuId { showBalance = 201, petCat, stretchPet, toggleRoam, toggleChase, toggleSound, bringHere, toggleVisible, quitPet };
+
+gd::Color bubbleColor(uint32_t rgb) { return gd::Color(0xff000000u | rgb); }
+
+void pawPrint(gd::Graphics& g, float x, float y, float size) {
+  const auto state = g.Save();
+  g.TranslateTransform(x, y);
+  g.ScaleTransform(size / 24, size / 24);
+  oval(g, {1.0f, 7.3f, 4.4f, 6.0f}, jade);
+  oval(g, {6.4f, 2.0f, 4.5f, 7.0f}, jade);
+  oval(g, {13.1f, 2.0f, 4.5f, 7.0f}, jade);
+  oval(g, {18.6f, 7.3f, 4.4f, 6.0f}, jade);
+  gd::GraphicsPath pad;
+  pad.AddBezier(12.f, 10.f, 9.f, 10.f, 8.f, 12.f, 5.7f, 14.7f);
+  pad.AddBezier(5.7f, 14.7f, 1.8f, 19.6f, 6.4f, 23.5f, 10.7f, 21.3f);
+  pad.AddBezier(10.7f, 21.3f, 11.7f, 20.8f, 12.3f, 20.8f, 13.3f, 21.3f);
+  pad.AddBezier(13.3f, 21.3f, 17.6f, 23.5f, 22.2f, 19.6f, 18.3f, 14.7f);
+  pad.AddBezier(18.3f, 14.7f, 16.f, 12.f, 15.f, 10.f, 12.f, 10.f);
+  pad.CloseFigure();
+  gd::SolidBrush fill(jade);
+  g.FillPath(&fill, &pad);
+  g.Restore(state);
+}
+
 Point pointer() {
   POINT p{};
   GetCursorPos(&p);
@@ -105,7 +128,7 @@ public:
     if (effects_) DestroyWindow(effects_);
     if (actor_) DestroyWindow(actor_);
     if (trayIcon_) DestroyIcon(trayIcon_);
-    if (cardBrush_) DeleteObject(cardBrush_);
+    if (settingsBrush_) DeleteObject(settingsBrush_);
   }
 
   int run() {
@@ -114,6 +137,7 @@ public:
       const auto size = GetPrivateProfileIntW(L"pet", L"sizePercent", 100, settings_.c_str());
       if (size >= minSize && size <= maxSize) sizePercent_ = static_cast<int>(size);
       soundEnabled_ = GetPrivateProfileIntW(L"pet", L"sound", 0, settings_.c_str()) == 1;
+      roam_ = GetPrivateProfileIntW(L"pet", L"roam", 1, settings_.c_str()) == 1;
     }
     if (!loadSprites() || !createWindows()) {
       MessageBoxW(nullptr, L"桌宠启动失败。请保留解压后的 bin 文件夹和素材。", L"小爪同伴", MB_OK | MB_ICONERROR);
@@ -171,7 +195,7 @@ private:
   bool createWindows() {
     const INITCOMMONCONTROLSEX controls{sizeof(controls), ICC_BAR_CLASSES};
     if (!InitCommonControlsEx(&controls)) return false;
-    cardBrush_ = CreateSolidBrush(RGB(255, 251, 246));
+    settingsBrush_ = CreateSolidBrush(RGB(236, 238, 229));
     WNDCLASSEXW windowClass{};
     windowClass.cbSize = sizeof(windowClass);
     windowClass.lpfnWndProc = windowProcedure;
@@ -193,11 +217,15 @@ private:
       0, 0, 1, 1, actor_, nullptr, instance_, this);
     if (!panel_) return false;
     refresh_ = makeButton(refreshButton, L"刷新余额");
-    close_ = makeButton(closeButton, L"关闭余额面板");
-    sound_ = makeButton(soundButton, soundEnabled_ ? L"音效开" : L"音效关");
+    actions_ = makeButton(actionsButton, L"桌宠菜单");
+    close_ = makeButton(closeButton, L"关闭气泡");
+    taskDetails_ = makeButton(taskDetailsButton, L"展开任务明细");
+    roamControl_ = makeButton(roamButton, roam_ ? L"自动巡游：开" : L"自动巡游：关");
+    sound_ = makeButton(soundButton, soundEnabled_ ? L"音效：开" : L"音效：关");
     slider_ = CreateWindowExW(0, TRACKBAR_CLASSW, L"桌宠大小", WS_CHILD | WS_VISIBLE | WS_TABSTOP | TBS_NOTICKS,
       0, 0, 1, 1, panel_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(sizeSlider)), instance_, nullptr);
-    if (!refresh_ || !close_ || !sound_ || !slider_) return false;
+    if (!refresh_ || !actions_ || !close_ || !taskDetails_ || !roamControl_ || !sound_ || !slider_) return false;
+    ShowWindow(taskDetails_, SW_HIDE);
     SendMessageW(slider_, TBM_SETRANGEMIN, FALSE, minSize);
     SendMessageW(slider_, TBM_SETRANGEMAX, FALSE, maxSize);
     SendMessageW(slider_, TBM_SETLINESIZE, 0, 1);
@@ -257,10 +285,18 @@ private:
   void toggleChime() {
     soundEnabled_ = !soundEnabled_;
     if (!settings_.empty()) WritePrivateProfileStringW(L"pet", L"sound", soundEnabled_ ? L"1" : L"0", settings_.c_str());
-    SetWindowTextW(sound_, soundEnabled_ ? L"音效开" : L"音效关");
+    SetWindowTextW(sound_, soundEnabled_ ? L"音效：开" : L"音效：关");
     InvalidateRect(sound_, nullptr, FALSE);
     if (soundEnabled_) meow(GetTickCount64(), true);
     else PlaySoundW(nullptr, nullptr, 0);
+  }
+
+  void toggleRoaming() {
+    roam_ = !roam_;
+    path_.clear();
+    if (!settings_.empty()) WritePrivateProfileStringW(L"pet", L"roam", roam_ ? L"1" : L"0", settings_.c_str());
+    SetWindowTextW(roamControl_, roam_ ? L"自动巡游：开" : L"自动巡游：关");
+    InvalidateRect(roamControl_, nullptr, FALSE);
   }
 
   void createTray() {
@@ -268,8 +304,9 @@ private:
       gd::Bitmap icon(32, 32, PixelFormat32bppARGB);
       gd::Graphics g(&icon);
       configure(g, 1);
-      rounded(g, {0, 0, 32, 32}, 8, gd::Color(255, 255, 240, 224));
-      drawSprite(g, *sprites_[idle], {0, 1, 32, 31});
+      g.Clear(gd::Color(0, 0, 0, 0));
+      rounded(g, {0, 0, 32, 32}, 7, bubbleColor(bubbleFill));
+      pawPrint(g, 4, 4, 24);
       g.Flush(gd::FlushIntentionSync);
       icon.GetHICON(&trayIcon_);
     }
@@ -301,10 +338,12 @@ private:
 
   void placePanel() {
     const Rect work = screens_[nearestScreen(screens_, pos_)].work;
-    panelScale_ = std::min({static_cast<double>(displayScale()), (work.width() - 12) / (panelWidth + 2 * bubbleGutter),
-      (work.height() - 12) / panelHeight});
+    const int extra = detailsExpanded_ ? static_cast<int>(bubbleDetailsHeight) : 0;
+    const double height = bubbleHeight + extra;
+    panelScale_ = std::min({static_cast<double>(displayScale()), (work.width() - 12) / (bubbleWidth + 2 * bubbleGutter),
+      (work.height() - 12) / height});
     panelScale_ = std::max(.45, panelScale_);
-    bubble_ = placeBubble(work, pos_, panelWidth, panelHeight, panelScale_, scale());
+    bubble_ = placeBubble(work, pos_, bubbleWidth, height, panelScale_, scale());
     const int w = roundedInt(bubble_.frame.width()), h = roundedInt(bubble_.frame.height());
     SetWindowPos(panel_, HWND_TOPMOST, roundedInt(bubble_.frame.left), roundedInt(bubble_.frame.top), w, h, SWP_NOACTIVATE);
     const int corner = roundedInt(2 * bubbleRadius * panelScale_);
@@ -317,10 +356,13 @@ private:
     if (shape && tail) CombineRgn(shape, shape, tail, RGN_OR);
     if (tail) DeleteObject(tail);
     if (shape && !SetWindowRgn(panel_, shape, TRUE)) DeleteObject(shape);
-    placeButton(refresh_, 287, 75, 62, 27);
-    placeButton(close_, 329, 15, 33, 30);
-    placeButton(slider_, 27, 479, 191, 23);
-    placeButton(sound_, 232, 465, 116, 30);
+    placeButton(actions_, 229, 12, 26, 26);
+    placeButton(close_, 260, 12, 26, 26);
+    placeButton(refresh_, 234, 52, 52, 24);
+    placeButton(taskDetails_, 263, 224, 25, 26);
+    placeButton(slider_, 88, 257 + extra, 145, 23);
+    placeButton(roamControl_, 16, 285 + extra, 127, 29);
+    placeButton(sound_, 157, 285 + extra, 127, 29);
   }
 
   void placeButton(HWND button, int x, int y, int w, int h) const {
@@ -331,6 +373,8 @@ private:
   void openPanel() {
     if (hidden_) showPet();
     path_.clear();
+    detailsExpanded_ = false;
+    SetWindowTextW(taskDetails_, L"展开任务明细");
     placePanel();
     panelOpen_ = true;
     bubbleHover_.opened(static_cast<double>(GetTickCount64()) / 1000);
@@ -339,6 +383,15 @@ private:
     SetFocus(refresh_);
     SetTimer(panel_, clockTimer, 1000, nullptr);
     requestBalance();
+  }
+
+  void toggleTaskDetails() {
+    if (!recent_) return;
+    detailsExpanded_ = !detailsExpanded_;
+    SetWindowTextW(taskDetails_, detailsExpanded_ ? L"收起任务明细" : L"展开任务明细");
+    placePanel();
+    InvalidateRect(panel_, nullptr, FALSE);
+    InvalidateRect(taskDetails_, nullptr, FALSE);
   }
 
   void hidePanel() {
@@ -353,7 +406,6 @@ private:
   void requestBalance() {
     if (demo_) {
       balance_ = {"ready", "api", "1", {{"CNY", "28.60", "3.60", "25.00"}}};
-      GetLocalTime(&balanceTime_);
     } else if (balance_.status != "loading") {
       balance_.status = "loading";
       writePipe("balance\n");
@@ -404,7 +456,6 @@ private:
     } else if (f[0] == "balance") {
       auto next = parseBalance(f);
       if (!next) return true;
-      if (next->status == "ready") GetLocalTime(&balanceTime_);
       // Keep the last currency for the task receipt while refreshing the balance.
       if (next->status == "loading") balance_.status = next->status;
       else balance_ = std::move(*next);
@@ -424,6 +475,7 @@ private:
 
   void acceptTask(const Task& task, bool announce) {
     recent_ = task;
+    ShowWindow(taskDetails_, SW_SHOWNA);
     if (announce && !hidden_) {
       if (toasts_.size() >= 16) toasts_.pop_front();
       toasts_.push_back(task);
@@ -649,23 +701,62 @@ private:
     const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::system_clock::now().time_since_epoch()).count();
     const auto window = tariffWindowAt(tariffCalendar, now);
-    rounded(g, {16, 213, 348, 78}, 15, paper);
-    label(g, L"峰谷倒计时", {29, 220, 96, 25}, 15, ink, true);
-    label(g, L"北京时间", {130, 221, 80, 24}, 10, quiet);
+    label(g, L"峰谷倒计时", {15, 141, 91, 20}, 13, ink, true);
+    label(g, L"北京时间", {106, 142, 64, 18}, 10, quiet);
+    const bool peak = window.current == Period::peak;
+    const auto color = bubbleColor(peak ? bubblePeak : bubbleOffPeak);
     if (window.current != Period::unknown) {
-      const bool peak = window.current == Period::peak;
-      const auto color = peak ? gd::Color(255, 153, 77, 39) : jade;
-      rounded(g, {273, 222, 76, 21}, 10,
-        peak ? gd::Color(255, 251, 230, 213) : gd::Color(255, 229, 239, 228));
-      label(g, peak ? L"高峰时段" : L"空闲时段", {273, 222, 76, 21}, 10, color, true, gd::StringAlignmentCenter);
+      rounded(g, {207, 140, 79, 21}, 10, bubbleColor(peak ? bubblePeakFill : bubbleOffPeakFill));
+      label(g, peak ? L"高峰时段" : L"空闲时段", {207, 140, 79, 21}, 11, color, true, gd::StringAlignmentCenter);
     }
     if (window.next) {
-      label(g, countdownText(secondsUntil(now, window.next->at)), {29, 247, 175, 31}, 21, ink, true);
-      const std::wstring next = window.next->period == Period::peak ? L"下次高峰  " : L"下次空闲  ";
-      label(g, next + beijingTime(window.next->at), {192, 249, 156, 30}, 11, quiet, false, gd::StringAlignmentFar);
+      const auto seconds = secondsUntil(now, window.next->at);
+      label(g, countdownText(seconds), {15, 161, 148, 32}, seconds >= 86400 ? 16.f : 22.f, color, true);
+      const wchar_t* next = window.next->period == Period::peak ? L"  转高峰" : L"  转空闲";
+      label(g, beijingTime(window.next->at) + next, {160, 168, 126, 22}, 11, quiet, false, gd::StringAlignmentFar);
     } else {
-      label(g, L"后续计费日历待更新", {29, 247, 319, 31}, 13, quiet);
+      label(g, L"后续计费日历待更新", {15, 163, 270, 28}, 13, quiet);
     }
+  }
+
+  void paintBalance(gd::Graphics& g) const {
+    label(g, L"DeepSeek 余额", {15, 53, 122, 23}, 13, ink, true);
+    if (balance_.status != "ready" || balance_.wallets.empty()) {
+      label(g, balanceMessage(balance_.status), {15, 77, 270, 41}, 12, quiet);
+      return;
+    }
+    if (balance_.available == "0") {
+      label(g, L"余额不足", {137, 54, 93, 21}, 11, bubbleColor(bubblePeak), false, gd::StringAlignmentFar);
+    }
+    const bool dual = balance_.wallets.size() == 2;
+    for (size_t i = 0; i < balance_.wallets.size(); ++i) {
+      const Wallet& wallet = balance_.wallets[i];
+      const float x = 15.f + 140.f * i;
+      const auto bonus = L"赠送 " + money(wallet.currency, wallet.bonus);
+      const auto cash = L"充值 " + money(wallet.currency, wallet.cash);
+      label(g, money(wallet.currency, wallet.total), {x, 75, dual ? 132.f : 270.f, 33}, dual ? 16.f : 24.f, jade, true);
+      if (dual) {
+        label(g, bonus, {x, 101, 132, 15}, 10, quiet);
+        label(g, cash, {x, 115, 132, 15}, 10, quiet);
+      } else {
+        label(g, bonus + L"  ·  " + cash, {x, 108, 270, 20}, 11, quiet);
+      }
+    }
+  }
+
+  void paintRecentTask(gd::Graphics& g) const {
+    label(g, L"最近任务", {15, 206, 100, 20}, 13, ink, true);
+    if (!recent_) {
+      label(g, L"暂无已结束的任务", {15, 224, 270, 25}, 12, quiet);
+      return;
+    }
+    const Task& task = *recent_;
+    label(g, tokenText(task), {15, 224, 145, 25}, 13, ink, true);
+    label(g, taskPrice(task, balance_), {160, 224, 103, 25}, 12, ink, false, gd::StringAlignmentFar);
+    if (!detailsExpanded_) return;
+    label(g, L"输入 " + grouped(task.input) + L"  ·  输出 " + grouped(task.output), {15, 252, 270, 17}, 11, quiet);
+    label(g, L"缓存命中 " + grouped(task.cached), {15, 269, 270, 17}, 11, quiet);
+    label(g, taskTitle(task) + L"  ·  " + taskCostNote(task), {15, 286, 270, 17}, 10, quiet);
   }
 
   void paintPanel() const {
@@ -674,57 +765,23 @@ private:
     {
       gd::Graphics g(dc);
       configure(g, static_cast<float>(panelScale_));
-      g.Clear(gd::Color(255, 250, 244, 237));
+      g.Clear(bubbleColor(bubbleFill));
       g.TranslateTransform(static_cast<float>(bubbleGutter), 0);
-      rounded(g, {17, 14, 44, 43}, 12, gd::Color(255, 242, 225, 209));
-      drawSprite(g, *sprites_[idle], {20, 16, 38, 41});
-      label(g, L"小爪同伴", {71, 12, 243, 28}, 21, ink, true);
-      label(g, (demo_ ? L"演示数据" : L"DeepSeek Harness") + std::wstring(L"  ·  ") + activityLabel(),
-        {71, 39, 243, 19}, 11, quiet);
-
-      rounded(g, {16, 66, 348, 136}, 15, paper);
-      label(g, L"DeepSeek 余额", {29, 77, 146, 23}, 15, ink, true);
-      if (balance_.status == "ready" && !balance_.wallets.empty()) {
-        const bool dual = balance_.wallets.size() == 2;
-        const float column = dual ? 163.0f : 315.0f;
-        for (size_t i = 0; i < balance_.wallets.size(); ++i) {
-          const Wallet& wallet = balance_.wallets[i];
-          const float x = 29 + i * column;
-          label(g, money(wallet.currency, wallet.total), {x, 102, column - 8, 38}, dual ? 23 : 28, jade, true);
-          label(g, L"赠送 " + money(wallet.currency, wallet.bonus), {x, 141, column - 8, 18}, 11, quiet);
-          label(g, L"充值 " + money(wallet.currency, wallet.cash), {x, 157, column - 8, 18}, 11, quiet);
-        }
-        wchar_t stamp[32]{};
-        swprintf(stamp, 32, L"%02u:%02u:%02u", balanceTime_.wHour, balanceTime_.wMinute, balanceTime_.wSecond);
-        const std::wstring source = balance_.mode == "account" ? L"平台账号" : L"API Key";
-        label(g, source + L"  ·  " + stamp + (balance_.available == "0" ? L"  ·  余额不足" : L""),
-          {29, 177, 320, 17}, 10, quiet);
-      } else {
-        label(g, balanceMessage(balance_.status), {29, 114, 322, 52}, 13, quiet);
-      }
-
+      rounded(g, {14, 9, 32, 32}, 9, bubbleColor(0xf2e1d1));
+      drawSprite(g, *sprites_[idle], {16, 10, 28, 30});
+      label(g, L"小爪同伴", {55, 11, 89, 28}, 16, ink, true);
+      label(g, demo_ ? L"演示 · " + activityLabel() : activityLabel(), {145, 13, 81, 24}, 11, quiet);
+      gd::SolidBrush rule(bubbleColor(bubbleDivider));
+      for (float y : {47.f, 132.f, 201.f}) g.FillRectangle(&rule, 14.f, y, 272.f, 1.f);
+      paintBalance(g);
       paintTariff(g);
-      rounded(g, {16, 302, 348, 137}, 15, paper);
-      label(g, L"最近任务", {29, 313, 120, 23}, 15, ink, true);
-      if (recent_) {
-        const Task& task = *recent_;
-        label(g, taskTitle(task), {176, 313, 172, 23}, 11, jade, false, gd::StringAlignmentFar);
-        label(g, tokenText(task), {29, 339, 194, 35}, 19, ink, true);
-        label(g, taskPrice(task, balance_), {196, 339, 152, 35}, 12, jade, true, gd::StringAlignmentFar);
-        label(g, L"输入 " + grouped(task.input) + L"   ·   输出 " + grouped(task.output),
-          {29, 375, 319, 20}, 11, quiet);
-        label(g, L"缓存命中 " + grouped(task.cached), {29, 394, 319, 19}, 11, quiet);
-        const std::wstring note = task.incomplete ? L"部分用量未返回" : task.coverage == "full"
-          ? L"模型费用按官方峰谷价估算" : task.coverage == "partial" ? L"仅显示可计价的模型费用" : L"当前模型费用无可用价格";
-        label(g, note, {29, 413, 319, 18}, 10, quiet);
-      } else {
-        label(g, demo_ ? L"演示任务结束后会在这里显示账单" : L"任务结束后会在这里显示用量和预估费用",
-          {29, 351, 319, 36}, 13, quiet);
-      }
-
-      rounded(g, {16, 450, 348, 56}, 15, paper);
-      label(g, L"桌宠大小", {29, 456, 97, 23}, 13, ink, true);
-      label(g, std::to_wstring(sizePercent_) + L"%", {158, 456, 57, 23}, 12, jade, true, gd::StringAlignmentFar);
+      paintRecentTask(g);
+      const float extra = detailsExpanded_ ? static_cast<float>(bubbleDetailsHeight) : 0.f;
+      rounded(g, {12, 252 + extra, 276, 65}, 10, bubbleColor(bubbleControlsFill));
+      g.FillRectangle(&rule, 20.f, 283.f + extra, 260.f, 1.f);
+      g.FillRectangle(&rule, 150.f, 291.f + extra, 1.f, 17.f);
+      label(g, L"桌宠大小", {20, 255 + extra, 66, 27}, 12, ink, true);
+      label(g, std::to_wstring(sizePercent_) + L"%", {235, 255 + extra, 45, 27}, 12, jade, true, gd::StringAlignmentFar);
     }
     EndPaint(panel_, &paint);
   }
@@ -734,12 +791,29 @@ private:
     configure(g, static_cast<float>(panelScale_));
     const float w = (item.rcItem.right - item.rcItem.left) / static_cast<float>(panelScale_);
     const float h = (item.rcItem.bottom - item.rcItem.top) / static_cast<float>(panelScale_);
-    g.Clear(item.CtlID == closeButton ? gd::Color(255, 250, 244, 237) : paper);
-    rounded(g, {0, 0, w, h}, 8, (item.itemState & ODS_SELECTED) ? gd::Color(255, 207, 226, 215) : gd::Color(255, 235, 239, 231));
-    const wchar_t* title = item.CtlID == closeButton ? L"×" : item.CtlID == refreshButton ? L"刷新"
-      : soundEnabled_ ? L"音效 · 开" : L"音效 · 关";
-    label(g, title, {0, 0, w, h}, item.CtlID == closeButton ? 19.0f : 12.0f,
-      jade, true, gd::StringAlignmentCenter);
+    const bool toggle = item.CtlID == roamButton || item.CtlID == soundButton;
+    g.Clear(bubbleColor(toggle ? bubbleControlsFill : bubbleFill));
+    if (toggle) {
+      const bool roam = item.CtlID == roamButton;
+      const bool enabled = roam ? roam_ : soundEnabled_;
+      label(g, roam ? L"自动巡游" : L"音效", {5, 0, 67, h}, 12, ink, true);
+      const float x = w - 40, y = (h - 18) / 2;
+      rounded(g, {x, y, 34, 18}, 9, enabled ? jade : bubbleColor(0x888c86));
+      oval(g, {x + (enabled ? 18.f : 2.f), y + 2, 14, 14}, bubbleColor(0xffffff));
+    } else if (item.CtlID == taskDetailsButton) {
+      gd::Pen pen(jade, 1.8f);
+      pen.SetLineCap(gd::LineCapRound, gd::LineCapRound, gd::DashCapRound);
+      const float x = w / 2, y = h / 2;
+      const gd::PointF points[3]{{x - 4, y - 3}, {x, y + 1}, {x + 4, y - 3}};
+      const gd::PointF collapsed[3]{{x - 2, y - 4}, {x + 2, y}, {x - 2, y + 4}};
+      g.DrawLines(&pen, detailsExpanded_ ? points : collapsed, 3);
+    } else {
+      rounded(g, {0, 0, w, h}, 7,
+        bubbleColor((item.itemState & ODS_SELECTED) ? 0xd4e6d9 : bubbleControlsFill));
+      if (item.CtlID == actionsButton) pawPrint(g, (w - 17) / 2, (h - 17) / 2, 17);
+      else label(g, item.CtlID == closeButton ? L"×" : L"刷新", {0, 0, w, h},
+        item.CtlID == closeButton ? 19.f : 12.f, jade, true, gd::StringAlignmentCenter);
+    }
     if (item.itemState & ODS_FOCUS) {
       gd::Pen pen(jade, 1);
       g.DrawRectangle(&pen, 3.0f, 3.0f, w - 6, h - 6);
@@ -778,7 +852,7 @@ private:
         stretchAt_ = GetTickCount64();
         nextRoam_ = std::max(nextRoam_, stretchAt_ + 2200);
         break;
-      case toggleRoam: roam_ = !roam_; path_.clear(); break;
+      case toggleRoam: toggleRoaming(); break;
       case toggleChase: chase_ = !chase_; break;
       case toggleSound: toggleChime(); break;
       case bringHere:
@@ -809,14 +883,14 @@ private:
         case WM_ERASEBKGND: return 1;
         case WM_DRAWITEM: paintButton(*reinterpret_cast<DRAWITEMSTRUCT*>(lp)); return TRUE;
         case WM_CTLCOLORSTATIC:
-          if (reinterpret_cast<HWND>(lp) == slider_ && cardBrush_) {
-            SetBkColor(reinterpret_cast<HDC>(wp), RGB(255, 251, 246));
-            return reinterpret_cast<LRESULT>(cardBrush_);
+          if (reinterpret_cast<HWND>(lp) == slider_ && settingsBrush_) {
+            SetBkColor(reinterpret_cast<HDC>(wp), RGB(236, 238, 229));
+            return reinterpret_cast<LRESULT>(settingsBrush_);
           }
           break;
         case WM_TIMER:
           if (wp == clockTimer) {
-            RECT area{0, roundedInt(212 * panelScale_), roundedInt(bubble_.frame.width()), roundedInt(293 * panelScale_)};
+            RECT area{0, roundedInt(133 * panelScale_), roundedInt(bubble_.frame.width()), roundedInt(201 * panelScale_)};
             InvalidateRect(panel_, &area, FALSE);
           }
           return 0;
@@ -824,9 +898,15 @@ private:
           if (reinterpret_cast<HWND>(lp) == slider_) resizePet();
           return 0;
         case WM_COMMAND:
-          if (LOWORD(wp) == refreshButton) requestBalance();
-          if (LOWORD(wp) == soundButton) toggleChime();
-          if (LOWORD(wp) == closeButton || LOWORD(wp) == IDCANCEL) hidePanel();
+          switch (LOWORD(wp)) {
+            case refreshButton: requestBalance(); break;
+            case soundButton: toggleChime(); break;
+            case roamButton: toggleRoaming(); break;
+            case actionsButton: menu(); break;
+            case taskDetailsButton: toggleTaskDetails(); break;
+            case closeButton:
+            case IDCANCEL: hidePanel(); break;
+          }
           return 0;
         case WM_CLOSE: hidePanel(); return 0;
       }
@@ -874,15 +954,15 @@ private:
   }
 
   HINSTANCE instance_{};
-  HWND actor_{}, effects_{}, panel_{}, refresh_{}, close_{}, slider_{}, sound_{};
+  HWND actor_{}, effects_{}, panel_{}, refresh_{}, actions_{}, close_{}, taskDetails_{}, slider_{}, roamControl_{}, sound_{};
   HICON trayIcon_{};
-  HBRUSH cardBrush_{};
+  HBRUSH settingsBrush_{};
   NOTIFYICONDATAW tray_{};
   HANDLE input_{}, output_{};
   UINT explorerRestart_{};
   bool demo_{}, linked_{}, trayReady_{}, hidden_{}, panelOpen_{}, menuOpen_{};
   bool roam_{true}, chase_{true}, walking_{}, facingRight_{}, pressed_{}, dragged_{}, rub_{};
-  bool soundEnabled_{};
+  bool soundEnabled_{}, detailsExpanded_{};
   int sizePercent_{100};
   std::wstring settings_, meowPath_;
   double panelScale_{1}, walkPixels_{}, walkSpeed_{};
@@ -901,7 +981,6 @@ private:
   LayerSurface actorSurface_, effectsSurface_;
   std::string pipeBuffer_, activity_{"idle"}, count_{"0"};
   Balance balance_;
-  SYSTEMTIME balanceTime_{};
   std::optional<Task> recent_, toast_;
   std::deque<Task> toasts_;
 };

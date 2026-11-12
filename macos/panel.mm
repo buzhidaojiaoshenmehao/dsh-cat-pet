@@ -4,6 +4,15 @@
 #include "tariff.hpp"
 #include "pricing-calendar.hpp"
 
+namespace {
+
+NSColor* panelColor(uint32_t rgb) {
+  return [NSColor colorWithSRGBRed:((rgb >> 16) & 255) / 255.0 green:((rgb >> 8) & 255) / 255.0
+    blue:(rgb & 255) / 255.0 alpha:1];
+}
+
+}
+
 @interface FlippedContent : NSView
 @end
 
@@ -31,7 +40,7 @@
   [tail lineToPoint:NSMakePoint(tip, self.tailY)];
   [tail lineToPoint:NSMakePoint(edge, self.tailY + paw::bubbleTailHalfHeight)];
   [tail closePath];
-  [NSColor.windowBackgroundColor setFill];
+  [panelColor(paw::bubbleFill) setFill];
   [outline fill];
   [tail fill];
 }
@@ -49,15 +58,43 @@ NSTextField* textLine(NSView* view, NSRect frame, CGFloat size, NSFontWeight wei
   return label;
 }
 
-void card(NSView* view, CGFloat y, CGFloat height, NSString* title) {
-  NSBox* box = [[NSBox alloc] initWithFrame:NSMakeRect(16, y, 356, height)];
+NSBox* surface(NSView* view, NSRect frame, CGFloat radius, uint32_t fill) {
+  NSBox* box = [[NSBox alloc] initWithFrame:frame];
   box.boxType = NSBoxCustom;
   box.titlePosition = NSNoTitle;
-  box.fillColor = NSColor.controlBackgroundColor;
-  box.borderColor = NSColor.separatorColor;
-  box.cornerRadius = 12;
+  box.borderWidth = 0;
+  box.fillColor = panelColor(fill);
+  box.cornerRadius = radius;
   [view addSubview:box];
-  textLine(view, NSMakeRect(29, y + 11, 220, 20), 13, NSFontWeightSemibold, NSColor.labelColor).stringValue = title;
+  return box;
+}
+
+NSImage* symbol(NSString* name, CGFloat size) {
+  return [[NSImage imageWithSystemSymbolName:name accessibilityDescription:nil]
+    imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:size weight:NSFontWeightSemibold]];
+}
+
+NSButton* iconButton(NSView* view, NSRect frame, NSString* name, NSString* fallback, NSString* label, id target, SEL action) {
+  NSButton* button = [NSButton buttonWithTitle:fallback target:target action:action];
+  button.image = symbol(name, 13);
+  if (button.image) button.imagePosition = NSImageOnly;
+  button.contentTintColor = panelColor(0x246454);
+  button.bordered = NO;
+  button.frame = frame;
+  [button setAccessibilityLabel:label];
+  button.toolTip = label;
+  [view addSubview:button];
+  return button;
+}
+
+NSSwitch* toggle(NSView* view, NSRect frame, NSString* label, id target, SEL action) {
+  NSSwitch* control = [[NSSwitch alloc] initWithFrame:frame];
+  control.controlSize = NSControlSizeSmall;
+  control.target = target;
+  control.action = action;
+  [control setAccessibilityLabel:label];
+  [view addSubview:control];
+  return control;
 }
 
 NSString* duration(int64_t seconds) {
@@ -73,25 +110,33 @@ NSString* duration(int64_t seconds) {
   BubbleContent* _bubble;
   NSMenu* _actions;
   NSTextField* _activity;
-  NSTextField* _amount;
-  NSTextField* _walletDetails[2];
+  NSTextField* _amount[2];
+  NSTextField* _walletBonus[2];
+  NSTextField* _walletCash[2];
+  NSTextField* _balanceNotice;
   NSButton* _refresh;
+  NSBox* _periodBadge;
   NSTextField* _period;
   NSTextField* _remaining;
   NSTextField* _deadline;
-  NSTextField* _taskStatus;
   NSTextField* _taskUsage;
   NSTextField* _taskPrice;
   NSTextField* _taskBreakdown;
+  NSTextField* _taskCache;
   NSTextField* _taskNote;
+  NSButton* _disclosure;
+  FlippedContent* _settingsView;
   NSTextField* _sizeLabel;
   NSSlider* _size;
-  NSButton* _sound;
+  NSSwitch* _sound;
+  NSSwitch* _roam;
   NSDateFormatter* _beijing;
+  BOOL _taskDetailsExpanded;
 }
 
-- (instancetype)initWithTarget:(id)target refresh:(SEL)refresh resize:(SEL)resize sound:(SEL)sound menu:(NSMenu*)menu {
-  const NSRect frame = NSMakeRect(0, 0, pawPanelWidth + 2 * paw::bubbleGutter, pawPanelHeight);
+- (instancetype)initWithTarget:(id)target refresh:(SEL)refresh resize:(SEL)resize
+    sound:(SEL)sound roam:(SEL)roam details:(SEL)details menu:(NSMenu*)menu portrait:(NSImage*)portrait {
+  const NSRect frame = NSMakeRect(0, 0, paw::bubbleWidth + 2 * paw::bubbleGutter, paw::bubbleHeight);
   self = [super initWithContentRect:frame
     styleMask:NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel
     backing:NSBackingStoreBuffered defer:NO];
@@ -103,69 +148,84 @@ NSString* duration(int64_t seconds) {
   self.opaque = NO;
   self.backgroundColor = NSColor.clearColor;
   self.hasShadow = YES;
+  self.appearance = [NSAppearance appearanceNamed:NSAppearanceNameAqua];
   self.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary;
   _bubble = [[BubbleContent alloc] initWithFrame:frame];
+  _bubble.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
   _actions = menu;
   FlippedContent* view = [[FlippedContent alloc] initWithFrame:NSInsetRect(frame, paw::bubbleGutter, 0)];
+  view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
   [_bubble addSubview:view];
   self.contentView = _bubble;
-  NSColor* ink = NSColor.labelColor;
-  NSColor* quiet = NSColor.secondaryLabelColor;
-  NSButton* actions = [NSButton buttonWithTitle:@"🐾" target:self action:@selector(showActions:)];
-  NSImage* paw = [NSImage imageWithSystemSymbolName:@"pawprint.fill" accessibilityDescription:@"桌宠菜单"];
-  if (paw) {
-    actions.image = paw;
-    actions.imagePosition = NSImageOnly;
-  }
-  actions.bordered = NO;
-  actions.frame = NSMakeRect(16, 8, 28, 26);
-  [actions setAccessibilityLabel:@"桌宠菜单"];
-  [view addSubview:actions];
-  _activity = textLine(view, NSMakeRect(50, 13, 280, 19), 12, NSFontWeightMedium, quiet);
-  NSButton* close = [NSButton buttonWithTitle:@"×" target:self action:@selector(cancelOperation:)];
-  close.bordered = NO;
-  close.frame = NSMakeRect(341, 8, 28, 26);
-  [close setAccessibilityLabel:@"关闭气泡"];
-  [view addSubview:close];
+  NSColor* ink = panelColor(0x2b2d28);
+  NSColor* quiet = panelColor(0x655e55);
+  NSColor* jade = panelColor(0x246454);
 
-  card(view, 39, 105, @"DeepSeek 余额");
+  surface(view, NSMakeRect(14, 9, 32, 32), 9, 0xf2e1d1);
+  NSImageView* avatar = [[NSImageView alloc] initWithFrame:NSMakeRect(14, 9, 32, 32)];
+  avatar.image = portrait;
+  avatar.imageScaling = NSImageScaleProportionallyDown;
+  [view addSubview:avatar];
+  textLine(view, NSMakeRect(55, 14, 89, 23), 16, NSFontWeightSemibold, ink).stringValue = @"小爪同伴";
+  _activity = textLine(view, NSMakeRect(145, 16, 81, 19), 11, NSFontWeightMedium, quiet);
+  surface(view, NSMakeRect(229, 12, 26, 26), 7, paw::bubbleControlsFill);
+  surface(view, NSMakeRect(260, 12, 26, 26), 7, paw::bubbleControlsFill);
+  iconButton(view, NSMakeRect(229, 12, 26, 26), @"pawprint.fill", @"🐾", @"桌宠菜单", self, @selector(showActions:));
+  iconButton(view, NSMakeRect(260, 12, 26, 26), @"xmark", @"×", @"关闭气泡", self, @selector(cancelOperation:));
+  for (CGFloat y : {47, 132, 201}) surface(view, NSMakeRect(14, y, 272, 1), 0, paw::bubbleDivider);
+
+  textLine(view, NSMakeRect(15, 55, 121, 19), 13, NSFontWeightSemibold, ink).stringValue = @"DeepSeek 余额";
+  _balanceNotice = textLine(view, NSMakeRect(136, 57, 94, 17), 10, NSFontWeightMedium, panelColor(paw::bubblePeak));
+  _balanceNotice.alignment = NSTextAlignmentRight;
   _refresh = [NSButton buttonWithTitle:@"刷新" target:target action:refresh];
-  _refresh.frame = NSMakeRect(295, 45, 64, 29);
+  _refresh.frame = NSMakeRect(232, 50, 55, 27);
   _refresh.bezelStyle = NSBezelStyleRounded;
+  _refresh.controlSize = NSControlSizeSmall;
   [_refresh setAccessibilityLabel:@"刷新余额"];
   [view addSubview:_refresh];
-  _amount = textLine(view, NSMakeRect(29, 73, 329, 27), 19, NSFontWeightSemibold, ink);
-  _walletDetails[0] = textLine(view, NSMakeRect(29, 100, 329, 18), 11, NSFontWeightRegular, quiet);
-  _walletDetails[1] = textLine(view, NSMakeRect(29, 117, 329, 18), 11, NSFontWeightRegular, quiet);
+  for (int i = 0; i < 2; ++i) {
+    const CGFloat x = 15 + 140 * i;
+    _amount[i] = textLine(view, NSMakeRect(x, 76, 132, 29), 17, NSFontWeightSemibold, jade);
+    _walletBonus[i] = textLine(view, NSMakeRect(x, 102, 132, 14), 10, NSFontWeightRegular, quiet);
+    _walletCash[i] = textLine(view, NSMakeRect(x, 115, 132, 14), 10, NSFontWeightRegular, quiet);
+  }
 
-  card(view, 154, 79, @"峰谷倒计时");
-  _period = textLine(view, NSMakeRect(226, 165, 132, 18), 11, NSFontWeightSemibold, quiet);
-  _period.alignment = NSTextAlignmentRight;
-  _remaining = textLine(view, NSMakeRect(29, 188, 160, 28), 20, NSFontWeightSemibold, ink);
-  _remaining.font = [NSFont monospacedDigitSystemFontOfSize:20 weight:NSFontWeightSemibold];
-  _deadline = textLine(view, NSMakeRect(185, 192, 173, 21), 11, NSFontWeightRegular, quiet);
+  textLine(view, NSMakeRect(15, 142, 88, 19), 13, NSFontWeightSemibold, ink).stringValue = @"峰谷倒计时";
+  textLine(view, NSMakeRect(106, 144, 64, 16), 10, NSFontWeightRegular, quiet).stringValue = @"北京时间";
+  _periodBadge = surface(view, NSMakeRect(207, 140, 79, 21), 10, paw::bubbleOffPeakFill);
+  _period = textLine(view, NSMakeRect(207, 142, 79, 18), 11, NSFontWeightSemibold, quiet);
+  _period.alignment = NSTextAlignmentCenter;
+  _remaining = textLine(view, NSMakeRect(15, 163, 150, 28), 22, NSFontWeightSemibold, ink);
+  _deadline = textLine(view, NSMakeRect(161, 171, 125, 18), 11, NSFontWeightRegular, quiet);
   _deadline.alignment = NSTextAlignmentRight;
 
-  card(view, 243, 113, @"最近任务");
-  _taskStatus = textLine(view, NSMakeRect(238, 254, 120, 19), 11, NSFontWeightMedium, quiet);
-  _taskStatus.alignment = NSTextAlignmentRight;
-  _taskUsage = textLine(view, NSMakeRect(29, 278, 214, 24), 17, NSFontWeightSemibold, ink);
-  _taskPrice = textLine(view, NSMakeRect(235, 278, 123, 24), 12, NSFontWeightSemibold, ink);
+  textLine(view, NSMakeRect(15, 208, 100, 18), 13, NSFontWeightSemibold, ink).stringValue = @"最近任务";
+  _taskUsage = textLine(view, NSMakeRect(15, 227, 153, 20), 13, NSFontWeightMedium, ink);
+  _taskPrice = textLine(view, NSMakeRect(167, 227, 97, 20), 12, NSFontWeightMedium, ink);
   _taskPrice.alignment = NSTextAlignmentRight;
-  _taskBreakdown = textLine(view, NSMakeRect(29, 307, 329, 18), 11, NSFontWeightRegular, quiet);
-  _taskNote = textLine(view, NSMakeRect(29, 325, 329, 18), 11, NSFontWeightRegular, quiet);
+  _disclosure = iconButton(view, NSMakeRect(263, 224, 25, 26), @"chevron.right", @"›", @"展开任务明细",
+    target, details);
+  _taskBreakdown = textLine(view, NSMakeRect(15, 253, 271, 16), 11, NSFontWeightRegular, quiet);
+  _taskCache = textLine(view, NSMakeRect(15, 270, 271, 16), 11, NSFontWeightRegular, quiet);
+  _taskNote = textLine(view, NSMakeRect(15, 287, 271, 16), 10, NSFontWeightRegular, quiet);
 
-  card(view, 366, 62, @"桌宠大小");
-  _sizeLabel = textLine(view, NSMakeRect(161, 377, 57, 20), 12, NSFontWeightMedium, quiet);
+  _settingsView = [[FlippedContent alloc] initWithFrame:NSMakeRect(12, 252, 276, 65)];
+  [view addSubview:_settingsView];
+  surface(_settingsView, _settingsView.bounds, 10, paw::bubbleControlsFill);
+  surface(_settingsView, NSMakeRect(8, 31, 260, 1), 0, paw::bubbleDivider);
+  textLine(_settingsView, NSMakeRect(9, 8, 62, 19), 12, NSFontWeightSemibold, ink).stringValue = @"桌宠大小";
+  _sizeLabel = textLine(_settingsView, NSMakeRect(223, 8, 43, 19), 12, NSFontWeightMedium, jade);
   _sizeLabel.alignment = NSTextAlignmentRight;
   _size = [NSSlider sliderWithValue:100 minValue:50 maxValue:180 target:target action:resize];
-  _size.frame = NSMakeRect(29, 397, 189, 23);
+  _size.frame = NSMakeRect(77, 5, 143, 23);
   _size.continuous = YES;
   [_size setAccessibilityLabel:@"桌宠大小"];
-  [view addSubview:_size];
-  _sound = [NSButton checkboxWithTitle:@"音效" target:target action:sound];
-  _sound.frame = NSMakeRect(251, 386, 107, 24);
-  [view addSubview:_sound];
+  [_settingsView addSubview:_size];
+  textLine(_settingsView, NSMakeRect(9, 40, 62, 19), 12, NSFontWeightSemibold, ink).stringValue = @"自动巡游";
+  textLine(_settingsView, NSMakeRect(157, 40, 45, 19), 12, NSFontWeightSemibold, ink).stringValue = @"音效";
+  _roam = toggle(_settingsView, NSMakeRect(80, 39, 47, 22), @"自动巡游", target, roam);
+  _sound = toggle(_settingsView, NSMakeRect(223, 39, 44, 22), @"音效", target, sound);
+  [self setTaskDetailsExpanded:NO];
 
   _beijing = [[NSDateFormatter alloc] init];
   _beijing.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
@@ -175,6 +235,21 @@ NSString* duration(int64_t seconds) {
 }
 
 - (BOOL)canBecomeKeyWindow { return YES; }
+
+- (CGFloat)bodyHeight { return paw::bubbleHeight + (_taskDetailsExpanded ? paw::bubbleDetailsHeight : 0); }
+- (BOOL)taskDetailsExpanded { return _taskDetailsExpanded; }
+
+- (void)setTaskDetailsExpanded:(BOOL)expanded {
+  _taskDetailsExpanded = expanded;
+  _taskBreakdown.hidden = _taskCache.hidden = _taskNote.hidden = !expanded;
+  const CGFloat extra = expanded ? paw::bubbleDetailsHeight : 0;
+  [_settingsView setFrameOrigin:NSMakePoint(12, 252 + extra)];
+  _disclosure.title = expanded ? @"⌄" : @"›";
+  _disclosure.image = symbol(expanded ? @"chevron.down" : @"chevron.right", 12);
+  NSString* label = expanded ? @"收起任务明细" : @"展开任务明细";
+  [_disclosure setAccessibilityLabel:label];
+  _disclosure.toolTip = label;
+}
 
 - (void)showActions:(NSButton*)sender {
   [_actions popUpMenuPositioningItem:nil atLocation:NSMakePoint(0, -2) inView:sender];
@@ -197,54 +272,66 @@ NSString* duration(int64_t seconds) {
 - (void)showBalance:(const paw::Balance&)balance {
   _refresh.enabled = balance.status != "loading";
   const bool ready = balance.status == "ready" && !balance.wallets.empty();
-  _amount.font = [NSFont systemFontOfSize:ready ? 19 : 13 weight:NSFontWeightSemibold];
-  _walletDetails[0].stringValue = @"";
-  _walletDetails[1].stringValue = @"";
+  const bool dual = ready && balance.wallets.size() == 2;
+  _amount[0].frame = NSMakeRect(15, 76, dual ? 132 : 271, 29);
+  _amount[0].font = [NSFont systemFontOfSize:dual ? 16 : ready ? 24 : 12 weight:NSFontWeightSemibold];
+  _walletBonus[0].frame = NSMakeRect(15, dual ? 102 : 110, dual ? 132 : 271, 15);
+  _balanceNotice.stringValue = ready && balance.available == "0" ? @"余额不足" : @"";
+  for (int i = 0; i < 2; ++i) {
+    _amount[i].stringValue = _walletBonus[i].stringValue = _walletCash[i].stringValue = @"";
+    _amount[i].toolTip = _walletBonus[i].toolTip = _walletCash[i].toolTip = nil;
+  }
   if (!ready) {
-    _amount.stringValue = pawText(paw::balanceMessage(balance.status));
+    _amount[0].stringValue = pawText(paw::balanceMessage(balance.status));
+    _amount[0].toolTip = _amount[0].stringValue;
     return;
   }
-  NSMutableArray<NSString*>* totals = [NSMutableArray arrayWithCapacity:balance.wallets.size()];
   for (size_t i = 0; i < balance.wallets.size(); ++i) {
     const auto& wallet = balance.wallets[i];
-    [totals addObject:pawText(paw::money(wallet.currency, wallet.total))];
-    _walletDetails[i].stringValue = [NSString stringWithFormat:@"赠送 %@    充值 %@",
-      pawText(paw::money(wallet.currency, wallet.bonus)), pawText(paw::money(wallet.currency, wallet.cash))];
+    _amount[i].toolTip = _amount[i].stringValue = pawText(paw::money(wallet.currency, wallet.total));
+    NSString* bonus = [@"赠送 " stringByAppendingString:pawText(paw::money(wallet.currency, wallet.bonus))];
+    NSString* cash = [@"充值 " stringByAppendingString:pawText(paw::money(wallet.currency, wallet.cash))];
+    _walletBonus[i].toolTip = _walletBonus[i].stringValue = dual ? bonus : [NSString stringWithFormat:@"%@  ·  %@", bonus, cash];
+    if (dual) _walletCash[i].toolTip = _walletCash[i].stringValue = cash;
   }
-  if (balance.available == "0") [totals addObject:@"余额不足"];
-  _amount.stringValue = [totals componentsJoinedByString:@"  ·  "];
 }
 
 - (void)showTask:(const std::optional<paw::Task>&)task balance:(const paw::Balance&)balance {
-  _taskUsage.font = [NSFont systemFontOfSize:task ? 17 : 12 weight:NSFontWeightSemibold];
-  _taskStatus.stringValue = task ? pawText(paw::taskTitle(*task)) : @"";
-  _taskUsage.stringValue = task ? pawText(paw::tokenText(*task)) : @"任务结束后显示用量和费用";
-  _taskPrice.stringValue = task ? pawText(paw::taskPrice(*task, balance)) : @"";
-  _taskBreakdown.stringValue = task ? [NSString stringWithFormat:@"输入 %@  ·  输出 %@  ·  缓存命中 %@",
-    pawText(paw::grouped(task->input)), pawText(paw::grouped(task->output)), pawText(paw::grouped(task->cached))] : @"";
-  _taskNote.stringValue = !task ? @"" : task->incomplete ? @"部分用量未返回" : task->coverage == "full"
-    ? @"模型费用按官方峰谷价估算" : task->coverage == "partial" ? @"仅显示可计价的模型费用" : @"当前模型费用无可用价格";
+  _disclosure.hidden = !task;
+  _taskUsage.frame = NSMakeRect(15, 227, task ? 147 : 271, 20);
+  _taskUsage.toolTip = _taskUsage.stringValue = task ? pawText(paw::tokenText(*task)) : @"暂无已结束的任务";
+  _taskPrice.toolTip = _taskPrice.stringValue = task ? pawText(paw::taskPrice(*task, balance)) : @"";
+  _taskBreakdown.stringValue = task ? [NSString stringWithFormat:@"输入 %@  ·  输出 %@",
+    pawText(paw::grouped(task->input)), pawText(paw::grouped(task->output))] : @"";
+  _taskCache.stringValue = task ? [@"缓存命中 " stringByAppendingString:pawText(paw::grouped(task->cached))] : @"";
+  _taskNote.stringValue = task ? pawText(paw::taskTitle(*task) + L"  ·  " + paw::taskCostNote(*task)) : @"";
 }
 
-- (void)showSize:(NSInteger)percent sound:(BOOL)enabled {
+- (void)showSize:(NSInteger)percent sound:(BOOL)sound roam:(BOOL)roam {
   _size.integerValue = percent;
   _sizeLabel.stringValue = [NSString stringWithFormat:@"%ld%%", long(percent)];
-  _sound.state = enabled ? NSControlStateValueOn : NSControlStateValueOff;
+  _sound.state = sound ? NSControlStateValueOn : NSControlStateValueOff;
+  _roam.state = roam ? NSControlStateValueOn : NSControlStateValueOff;
 }
 
 - (void)refreshClock {
   const int64_t now = int64_t(NSDate.date.timeIntervalSince1970 * 1000);
   const auto window = paw::tariffWindowAt(paw::tariffCalendar, now);
-  _period.stringValue = window.current == paw::Period::unknown ? @"北京时间"
-    : window.current == paw::Period::peak ? @"高峰时段 · 北京时间" : @"空闲时段 · 北京时间";
+  const bool peak = window.current == paw::Period::peak;
+  _period.hidden = _periodBadge.hidden = window.current == paw::Period::unknown;
+  _period.stringValue = peak ? @"高峰时段" : @"空闲时段";
+  _period.textColor = _remaining.textColor = panelColor(peak ? paw::bubblePeak : paw::bubbleOffPeak);
+  _periodBadge.fillColor = panelColor(peak ? paw::bubblePeakFill : paw::bubbleOffPeakFill);
   if (!window.next) {
     _remaining.font = [NSFont systemFontOfSize:13 weight:NSFontWeightMedium];
+    _remaining.textColor = panelColor(0x655e55);
     _remaining.stringValue = @"后续计费日历待更新";
     _deadline.stringValue = @"";
     return;
   }
-  _remaining.font = [NSFont monospacedDigitSystemFontOfSize:20 weight:NSFontWeightSemibold];
-  _remaining.stringValue = duration(paw::secondsUntil(now, window.next->at));
+  const auto seconds = paw::secondsUntil(now, window.next->at);
+  _remaining.font = [NSFont monospacedDigitSystemFontOfSize:seconds >= 86400 ? 16 : 22 weight:NSFontWeightSemibold];
+  _remaining.stringValue = duration(seconds);
   NSDate* deadline = [NSDate dateWithTimeIntervalSince1970:window.next->at / 1000.0];
   NSString* next = window.next->period == paw::Period::peak ? @"下次高峰" : @"下次空闲";
   _deadline.stringValue = [NSString stringWithFormat:@"%@  %@", next, [_beijing stringFromDate:deadline]];
