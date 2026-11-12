@@ -1,5 +1,6 @@
 #include "../native/geometry.hpp"
 #include "../native/animation.hpp"
+#include "../native/bubble.hpp"
 #include "../native/protocol.hpp"
 #include "../native/sounds.hpp"
 #include "../native/tariff.hpp"
@@ -55,17 +56,35 @@ int main() {
   const auto stride = catPose(Action::walk, 0, 0, 0, true);
   assert(animation.sample(seated, 0).width == seated.width);
   const auto beginning = animation.sample(stride, 1);
-  assert(beginning.sprite == walk1 && beginning.width == seated.width);
+  assert(beginning.sprite == walkFirst && beginning.width == seated.width);
   const auto middleFrame = catPose(Action::walk, .085, 0, 5, true);
   const auto halfway = animation.sample(middleFrame, 1.085);
-  assert(halfway.sprite == walk1a && halfway.width > seated.width && halfway.width < stride.width);
+  assert(halfway.sprite > walkFirst && halfway.sprite < stretchFirst && halfway.width > seated.width && halfway.width < stride.width);
   assert(animation.sample(stride, 1.20).width == stride.width);
   const auto stretching = catPose(Action::stretch, 0, .675, 0, false);
-  assert(stretching.stretchX > 1 && stretching.stretchY < 1);
+  assert(stretching.sprite == spriteCount - 1);
+  assert(catPose(Action::stretch, 0, stretchDuration, 0, false).sprite == stretchFirst);
   assert(spriteBounds(500, 330, stretching, 140, 160).bottom == 160);
   assert(catPose(Action::sit, 3.82, 0, 0, false).blink > .95);
   double speed = 0;
   assert(walkingStep(100, .016, 88, true, speed) < .5);
   speed = 88;
   assert(walkingStep(.5, .016, 88, true, speed) == .5 && speed < 88);
+
+  const Rect work{0, 0, 1440, 900};
+  const auto bubble = placeBubble(work, {520, 680}, 388, 444, 1, 1);
+  assert(bubble.tailLeft && inBubble(bubble, bubble.frame.center()));
+  assert(inBubble(bubble, {bubble.frame.left + 5, bubble.frame.top + bubble.tailY}));
+  assert(!inBubble(bubble, {bubble.frame.left + 5, bubble.frame.top + bubble.tailY + 12}));
+  assert(!placeBubble(work, {1350, 680}, 388, 444, 1, 1).tailLeft);
+  BubbleHover hover;
+  hover.opened(0);
+  assert(!hover.expired(4.9, false));
+  assert(!hover.expired(7, true));
+  assert(!hover.expired(10, true));
+  assert(!hover.expired(11, false));
+  assert(!hover.expired(15.9, false));
+  assert(!hover.expired(16, true));
+  assert(!hover.expired(17, false));
+  assert(hover.expired(22, false));
 }

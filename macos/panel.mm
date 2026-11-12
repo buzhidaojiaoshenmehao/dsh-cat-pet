@@ -1,5 +1,6 @@
 #import "panel.hpp"
 
+#include "bubble.hpp"
 #include "tariff.hpp"
 #include "pricing-calendar.hpp"
 
@@ -8,6 +9,32 @@
 
 @implementation FlippedContent
 - (BOOL)isFlipped { return YES; }
+@end
+
+@interface BubbleContent : FlippedContent
+@property BOOL tailOnLeft;
+@property CGFloat tailY;
+@end
+
+@implementation BubbleContent
+- (void)drawRect:(NSRect)dirty {
+  [NSColor.clearColor setFill];
+  NSRectFillUsingOperation(dirty, NSCompositingOperationCopy);
+  const CGFloat gutter = paw::bubbleGutter;
+  const NSRect body = NSInsetRect(self.bounds, gutter, 0);
+  NSBezierPath* outline = [NSBezierPath bezierPathWithRoundedRect:body
+    xRadius:paw::bubbleRadius yRadius:paw::bubbleRadius];
+  const CGFloat edge = self.tailOnLeft ? NSMinX(body) + 1 : NSMaxX(body) - 1;
+  const CGFloat tip = self.tailOnLeft ? NSMinX(self.bounds) + 1 : NSMaxX(self.bounds) - 1;
+  NSBezierPath* tail = [NSBezierPath bezierPath];
+  [tail moveToPoint:NSMakePoint(edge, self.tailY - paw::bubbleTailHalfHeight)];
+  [tail lineToPoint:NSMakePoint(tip, self.tailY)];
+  [tail lineToPoint:NSMakePoint(edge, self.tailY + paw::bubbleTailHalfHeight)];
+  [tail closePath];
+  [NSColor.windowBackgroundColor setFill];
+  [outline fill];
+  [tail fill];
+}
 @end
 
 namespace {
@@ -43,6 +70,8 @@ NSString* duration(int64_t seconds) {
 }
 
 @implementation PawPanel {
+  BubbleContent* _bubble;
+  NSMenu* _actions;
   NSTextField* _activity;
   NSTextField* _amount;
   NSTextField* _walletDetails[2];
@@ -61,21 +90,43 @@ NSString* duration(int64_t seconds) {
   NSDateFormatter* _beijing;
 }
 
-- (instancetype)initWithTarget:(id)target refresh:(SEL)refresh resize:(SEL)resize sound:(SEL)sound {
-  self = [super initWithContentRect:NSMakeRect(0, 0, 388, 444)
-    styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskNonactivatingPanel
+- (instancetype)initWithTarget:(id)target refresh:(SEL)refresh resize:(SEL)resize sound:(SEL)sound menu:(NSMenu*)menu {
+  const NSRect frame = NSMakeRect(0, 0, pawPanelWidth + 2 * paw::bubbleGutter, pawPanelHeight);
+  self = [super initWithContentRect:frame
+    styleMask:NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel
     backing:NSBackingStoreBuffered defer:NO];
   if (!self) return nil;
   self.title = @"小爪同伴";
   self.releasedWhenClosed = NO;
   self.floatingPanel = YES;
   self.hidesOnDeactivate = NO;
+  self.opaque = NO;
+  self.backgroundColor = NSColor.clearColor;
+  self.hasShadow = YES;
   self.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary;
-  FlippedContent* view = [[FlippedContent alloc] initWithFrame:NSMakeRect(0, 0, 388, 444)];
-  self.contentView = view;
+  _bubble = [[BubbleContent alloc] initWithFrame:frame];
+  _actions = menu;
+  FlippedContent* view = [[FlippedContent alloc] initWithFrame:NSInsetRect(frame, paw::bubbleGutter, 0)];
+  [_bubble addSubview:view];
+  self.contentView = _bubble;
   NSColor* ink = NSColor.labelColor;
   NSColor* quiet = NSColor.secondaryLabelColor;
-  _activity = textLine(view, NSMakeRect(18, 13, 352, 19), 12, NSFontWeightMedium, quiet);
+  NSButton* actions = [NSButton buttonWithTitle:@"🐾" target:self action:@selector(showActions:)];
+  NSImage* paw = [NSImage imageWithSystemSymbolName:@"pawprint.fill" accessibilityDescription:@"桌宠菜单"];
+  if (paw) {
+    actions.image = paw;
+    actions.imagePosition = NSImageOnly;
+  }
+  actions.bordered = NO;
+  actions.frame = NSMakeRect(16, 8, 28, 26);
+  [actions setAccessibilityLabel:@"桌宠菜单"];
+  [view addSubview:actions];
+  _activity = textLine(view, NSMakeRect(50, 13, 280, 19), 12, NSFontWeightMedium, quiet);
+  NSButton* close = [NSButton buttonWithTitle:@"×" target:self action:@selector(cancelOperation:)];
+  close.bordered = NO;
+  close.frame = NSMakeRect(341, 8, 28, 26);
+  [close setAccessibilityLabel:@"关闭气泡"];
+  [view addSubview:close];
 
   card(view, 39, 105, @"DeepSeek 余额");
   _refresh = [NSButton buttonWithTitle:@"刷新" target:target action:refresh];
@@ -121,6 +172,19 @@ NSString* duration(int64_t seconds) {
   _beijing.timeZone = [NSTimeZone timeZoneWithName:@"Asia/Shanghai"];
   _beijing.dateFormat = @"MM/dd HH:mm";
   return self;
+}
+
+- (BOOL)canBecomeKeyWindow { return YES; }
+
+- (void)showActions:(NSButton*)sender {
+  [_actions popUpMenuPositioningItem:nil atLocation:NSMakePoint(0, -2) inView:sender];
+}
+
+- (void)setTailOnLeft:(BOOL)left offset:(CGFloat)offset {
+  _bubble.tailOnLeft = left;
+  _bubble.tailY = offset;
+  _bubble.needsDisplay = YES;
+  [self invalidateShadow];
 }
 
 - (void)cancelOperation:(id)sender {

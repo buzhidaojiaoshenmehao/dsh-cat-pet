@@ -8,7 +8,7 @@ const output = join(root, 'bin', 'assets')
 mkdirSync(output, { recursive: true })
 
 // Slice the generated atlases. Keep their alpha and align all walk frames to one common crop.
-function slice(file, columns, rows, names, align) {
+function slice(file, columns, rows, names, align, destination = output) {
   const input = join(root, 'assets', 'atlases', file)
   const probe = execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=width,height,pix_fmt', '-of', 'json', input])
   const { width, height, pix_fmt } = JSON.parse(probe).streams[0]
@@ -49,13 +49,15 @@ function slice(file, columns, rows, names, align) {
     const shrink = Math.min(1, 540 / Math.max(w, h))
     const filter = `format=rgba,crop=${w}:${h}:${box.x0 + left}:${box.y0 + top},scale=${Math.round(w * shrink)}:${Math.round(h * shrink)}:flags=lanczos,format=rgba`
     execFileSync('ffmpeg', ['-v', 'error', '-y', '-i', input, '-frames:v', '1', '-vf', filter,
-      '-threads', '1', join(output, `${names[index]}.png`)])
+      '-threads', '1', join(destination, `${names[index]}.png`)])
   }
   console.log(`${file}: ${names.join(', ')}`)
 }
 
 slice('poses.png', 3, 2, ['idle', 'curious', 'paw', 'sleep', 'belly', 'crouch'], false)
-slice('walk.png', 2, 2, ['walk-1', 'walk-2', 'walk-3', 'walk-4'], true)
+const walkSource = join(root, '.build', 'walk-source')
+mkdirSync(walkSource, { recursive: true })
+slice('walk.png', 2, 2, ['walk-1', 'walk-2', 'walk-3', 'walk-4'], true, walkSource)
 
 execFileSync('ffmpeg', ['-v', 'error', '-y', '-i', join(output, 'paw.png'), '-frames:v', '1',
   '-vf', 'scale=112:112:force_original_aspect_ratio=decrease:flags=lanczos,format=rgba,pad=128:128:(ow-iw)/2:(oh-ih)/2:color=black@0',

@@ -14,8 +14,10 @@ for (const arch of ['x64', 'arm64']) {
 }
 if (!existsSync(join(root, macExecutable))) throw new Error('Build macOS first')
 if (!existsSync(join(root, 'bin', 'assets', 'meow.wav'))) throw new Error('Missing meow audio')
-const walkFrames = [1, 2, 3, 4].flatMap(step => ['', '-a', '-b'].map(frame => `walk-${step}${frame}`))
-for (const sprite of ['idle', 'curious', 'paw', 'sleep', 'belly', 'crouch', 'icon', ...walkFrames]) {
+const motionFrames = (prefix, count) => Array.from({ length: count }, (_, i) => `${prefix}-${String(i).padStart(2, '0')}`)
+const sprites = ['idle', 'curious', 'paw', 'sleep', 'belly', 'crouch', 'icon',
+  ...motionFrames('gait', 24), ...motionFrames('stretch', 14)]
+for (const sprite of sprites) {
   if (!existsSync(join(root, 'bin', 'assets', `${sprite}.png`))) throw new Error(`Missing sprite ${sprite}`)
 }
 

@@ -2,6 +2,7 @@
 #import "panel.hpp"
 
 #include "animation.hpp"
+#include "bubble.hpp"
 #include "sounds.hpp"
 
 #include <cerrno>
@@ -86,12 +87,9 @@ NSSound* chime(std::initializer_list<Note> notes) {
 - (void)rightMouseDown:(NSEvent*)event { [self.controller showMenu:event inView:self]; }
 
 - (BOOL)loadSprites {
-  NSArray<NSString*>* names = @[@"idle", @"curious", @"paw", @"sleep", @"belly", @"crouch",
-    @"walk-1", @"walk-1-a", @"walk-1-b", @"walk-2", @"walk-2-a", @"walk-2-b",
-    @"walk-3", @"walk-3-a", @"walk-3-b", @"walk-4", @"walk-4-a", @"walk-4-b"];
   NSURL* directory = assets();
-  for (NSUInteger i = 0; i < names.count; ++i) {
-    NSURL* url = [directory URLByAppendingPathComponent:[names[i] stringByAppendingPathExtension:@"png"]];
+  for (int i = 0; i < spriteCount; ++i) {
+    NSURL* url = [directory URLByAppendingPathComponent:[NSString stringWithUTF8String:spriteFile(i).c_str()]];
     NSData* data = [NSData dataWithContentsOfURL:url];
     if (!data) return NO;
     _bitmaps[i] = [[NSBitmapImageRep alloc] initWithData:data];
@@ -241,6 +239,8 @@ NSSound* chime(std::initializer_list<Note> notes) {
   double _start, _lastTick, _idleSince, _nextRoam, _walked, _walkSpeed, _hoverSince, _pointerMoved;
   double _playUntil, _playedAt, _caughtAt, _chaseAfter, _nextMeow, _toastUntil, _stretchAt;
   PoseAnimator _poses;
+  BubbleLayout _bubbleLayout;
+  BubbleHover _bubbleHover;
   int64_t _clockSecond;
   std::string _incoming, _activity, _count;
   Balance _balance;
@@ -414,6 +414,9 @@ NSSound* chime(std::initializer_list<Note> notes) {
   _lastTick = now;
   if (!_bridge) [self advanceDemo:now];
   if (_panel.visible) {
+    const bool inside = inBubble(_bubbleLayout, pointer());
+    _panel.ignoresMouseEvents = !inside;
+    if (_bubbleHover.expired(now, inside)) [_panel orderOut:nil];
     const auto second = int64_t(NSDate.date.timeIntervalSince1970);
     if (_clockSecond != second) {
       _clockSecond = second;
@@ -452,7 +455,7 @@ NSSound* chime(std::initializer_list<Note> notes) {
     return;
   }
   _hoverSince = 0;
-  if (_toast || now < _playUntil || (_stretchAt && now - _stretchAt < 1.35)) return;
+  if (_toast || now < _playUntil || (_stretchAt && now - _stretchAt < stretchDuration)) return;
   const double scale = [self scale];
   const paw::Point center = _position - paw::Point{0, 60 * scale};
   const double distance = length(mouse - center);
@@ -525,7 +528,7 @@ NSSound* chime(std::initializer_list<Note> notes) {
     action = _toast->outcome == "completed" ? Action::celebrate : Action::notice;
     age = 4.6 - (_toastUntil - now);
   } else if (_walking) action = Action::walk;
-  else if (_stretchAt && now - _stretchAt < 1.35) {
+  else if (_stretchAt && now - _stretchAt < stretchDuration) {
     action = Action::stretch;
     age = now - _stretchAt;
   } else if (_activity == "working") action = Action::work;
@@ -613,13 +616,9 @@ NSSound* chime(std::initializer_list<Note> notes) {
 - (void)placePanel {
   if (_screens.empty()) return;
   const paw::Rect work = _screens[nearestScreen(_screens, _position)].work;
-  const NSSize size = _panel.frame.size;
-  const double side = 102 * [self scale];
-  double x = _position.x + side;
-  if (x + size.width > work.right) x = _position.x - side - size.width;
-  x = std::clamp(x, work.left, std::max(work.left, work.right - size.width));
-  const double top = std::clamp(_position.y - size.height + 25, work.top, std::max(work.top, work.bottom - size.height));
-  [_panel setFrameTopLeftPoint:NSMakePoint(x, -top)];
+  _bubbleLayout = placeBubble(work, _position, pawPanelWidth, pawPanelHeight, 1, [self scale]);
+  [_panel setFrameTopLeftPoint:NSMakePoint(_bubbleLayout.frame.left, -_bubbleLayout.frame.top)];
+  [_panel setTailOnLeft:_bubbleLayout.tailLeft offset:_bubbleLayout.tailY];
 }
 
 - (void)openPanel:(id)sender {
@@ -627,8 +626,10 @@ NSSound* chime(std::initializer_list<Note> notes) {
   if (_hidden) [self toggleVisible:nil];
   _route.clear();
   if (!_panel) _panel = [[PawPanel alloc] initWithTarget:self refresh:@selector(refreshBalance:)
-    resize:@selector(resize:) sound:@selector(toggleSound:)];
+    resize:@selector(resize:) sound:@selector(toggleSound:) menu:_menu];
   [self placePanel];
+  _bubbleHover.opened(uptime());
+  _panel.ignoresMouseEvents = !inBubble(_bubbleLayout, pointer());
   [self updatePanel];
   [_panel refreshClock];
   [_panel makeKeyAndOrderFront:nil];

@@ -1,6 +1,6 @@
 {
   "name": "dsh-cat-pet",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "小爪同伴 · macOS 与 Windows 桌宠、DeepSeek 余额、任务用量与峰谷倒计时",
   "icon": "./bin/assets/icon.png",
   "type": "module",

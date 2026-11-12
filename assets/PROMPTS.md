@@ -1,6 +1,6 @@
 # 小爪同伴的动作素材
 
-使用内置 imagegen 参照猫的形象生成两张透明 RGBA 图集。图集保存在 `assets/atlases/poses.png` 和 `assets/atlases/walk.png`。运行 `scripts/prepare-sprites.mjs` 会保留透明度，切分为 `bin/assets/` 中的 10 张 PNG。
+使用内置 imagegen 参照猫的形象生成两张透明 RGBA 图集。运行 scripts/prepare-sprites.mjs 会切出静态姿势和走路参考。运行 scripts/prepare-walk.py 会从同一张侧面参考分出身体和四条腿，生成步态与伸懒腰帧。
 
 ## 六个动作姿势
 

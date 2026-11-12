@@ -1,5 +1,6 @@
 #define NOMINMAX
 #include "geometry.hpp"
+#include "bubble.hpp"
 #include "graphics.hpp"
 #include "protocol.hpp"
 #include "sounds.hpp"
@@ -27,11 +28,6 @@ constexpr UINT_PTR clockTimer = 2;
 constexpr int minSize = 50, maxSize = 180;
 constexpr float panelWidth = 380, panelHeight = 520;
 enum MenuId { showBalance = 201, petCat, stretchPet, toggleRoam, toggleChase, toggleSound, bringHere, toggleVisible, quitPet };
-constexpr std::array spriteNames{L"idle", L"curious", L"paw", L"sleep", L"belly", L"crouch",
-  L"walk-1", L"walk-1-a", L"walk-1-b", L"walk-2", L"walk-2-a", L"walk-2-b",
-  L"walk-3", L"walk-3-a", L"walk-3-b", L"walk-4", L"walk-4-a", L"walk-4-b"};
-static_assert(spriteNames.size() == spriteCount);
-
 Point pointer() {
   POINT p{};
   GetCursorPos(&p);
@@ -166,7 +162,7 @@ private:
     if (folder.empty()) return false;
     meowPath_ = folder + L"meow.wav";
     for (size_t i = 0; i < sprites_.size(); ++i) {
-      sprites_[i] = std::make_unique<gd::Bitmap>((folder + spriteNames[i] + L".png").c_str());
+      sprites_[i] = std::make_unique<gd::Bitmap>((folder + ascii(spriteFile(static_cast<int>(i)))).c_str());
       if (sprites_[i]->GetLastStatus() != gd::Ok || sprites_[i]->GetWidth() == 0) return false;
     }
     return true;
@@ -305,18 +301,22 @@ private:
 
   void placePanel() {
     const Rect work = screens_[nearestScreen(screens_, pos_)].work;
-    panelScale_ = std::min({static_cast<double>(displayScale()), (work.width() - 12) / panelWidth,
+    panelScale_ = std::min({static_cast<double>(displayScale()), (work.width() - 12) / (panelWidth + 2 * bubbleGutter),
       (work.height() - 12) / panelHeight});
     panelScale_ = std::max(.45, panelScale_);
-    const double w = panelWidth * panelScale_, h = panelHeight * panelScale_;
-    double x = pos_.x + 102 * scale();
-    if (x + w > work.right) x = pos_.x - 102 * scale() - w;
-    x = std::clamp(x, work.left + 5, std::max(work.left + 5, work.right - w - 5));
-    const double y = std::clamp(pos_.y - h + 24, work.top + 5, std::max(work.top + 5, work.bottom - h - 5));
-    SetWindowPos(panel_, HWND_TOPMOST, roundedInt(x), roundedInt(y), roundedInt(w), roundedInt(h), SWP_NOACTIVATE);
-    const int radius = roundedInt(22 * panelScale_);
-    const HRGN shape = CreateRoundRectRgn(0, 0, roundedInt(w) + 1, roundedInt(h) + 1, radius, radius);
-    if (!SetWindowRgn(panel_, shape, TRUE)) DeleteObject(shape);
+    bubble_ = placeBubble(work, pos_, panelWidth, panelHeight, panelScale_, scale());
+    const int w = roundedInt(bubble_.frame.width()), h = roundedInt(bubble_.frame.height());
+    SetWindowPos(panel_, HWND_TOPMOST, roundedInt(bubble_.frame.left), roundedInt(bubble_.frame.top), w, h, SWP_NOACTIVATE);
+    const int corner = roundedInt(2 * bubbleRadius * panelScale_);
+    const int gutter = roundedInt(bubbleGutter * panelScale_);
+    const int y = roundedInt(bubble_.tailY), half = roundedInt(bubbleTailHalfHeight * panelScale_);
+    const LONG edge = bubble_.tailLeft ? gutter + 1 : w - gutter - 1;
+    const POINT tailPoints[]{{edge, y - half}, {bubble_.tailLeft ? 1L : w - 1L, y}, {edge, y + half}};
+    const HRGN shape = CreateRoundRectRgn(gutter, 0, w - gutter + 1, h + 1, corner, corner);
+    const HRGN tail = CreatePolygonRgn(tailPoints, 3, WINDING);
+    if (shape && tail) CombineRgn(shape, shape, tail, RGN_OR);
+    if (tail) DeleteObject(tail);
+    if (shape && !SetWindowRgn(panel_, shape, TRUE)) DeleteObject(shape);
     placeButton(refresh_, 287, 75, 62, 27);
     placeButton(close_, 329, 15, 33, 30);
     placeButton(slider_, 27, 479, 191, 23);
@@ -324,7 +324,7 @@ private:
   }
 
   void placeButton(HWND button, int x, int y, int w, int h) const {
-    MoveWindow(button, roundedInt(x * panelScale_), roundedInt(y * panelScale_),
+    MoveWindow(button, roundedInt((x + bubbleGutter) * panelScale_), roundedInt(y * panelScale_),
       roundedInt(w * panelScale_), roundedInt(h * panelScale_), TRUE);
   }
 
@@ -333,6 +333,7 @@ private:
     path_.clear();
     placePanel();
     panelOpen_ = true;
+    bubbleHover_.opened(static_cast<double>(GetTickCount64()) / 1000);
     ShowWindow(panel_, SW_SHOW);
     SetForegroundWindow(panel_);
     SetFocus(refresh_);
@@ -498,7 +499,7 @@ private:
       return;
     }
     hoverAt_ = 0;
-    if (toast_ || now < playUntil_ || (stretchAt_ && now - stretchAt_ < 1350)) return;
+    if (toast_ || now < playUntil_ || (stretchAt_ && now - stretchAt_ < stretchDuration * 1000)) return;
 
     const Point center = pos_ - Point{0, 60 * dpi};
     const double cursorDistance = length(mouse - center);
@@ -555,7 +556,9 @@ private:
       toastUntil_ = now + 4600;
       if (toast_->outcome == "completed") playFinishSound(now);
     }
-    movement(now, dt, pointer(), scale());
+    const auto mouse = pointer();
+    if (panelOpen_ && bubbleHover_.expired(static_cast<double>(now) / 1000, inBubble(bubble_, mouse))) hidePanel();
+    movement(now, dt, mouse, scale());
     if (!walking_) walkSpeed_ = 0;
     paintActor(now);
   }
@@ -572,7 +575,7 @@ private:
       action = toast_->outcome == "completed" ? Action::celebrate : Action::notice;
       age = static_cast<double>(4600 - (toastUntil_ - now)) / 1000;
     } else if (walking_) action = Action::walk;
-    else if (stretchAt_ && now - stretchAt_ < 1350) {
+    else if (stretchAt_ && now - stretchAt_ < stretchDuration * 1000) {
       action = Action::stretch;
       age = static_cast<double>(now - stretchAt_) / 1000;
     } else if (activity_ == "working") action = Action::work;
@@ -672,6 +675,7 @@ private:
       gd::Graphics g(dc);
       configure(g, static_cast<float>(panelScale_));
       g.Clear(gd::Color(255, 250, 244, 237));
+      g.TranslateTransform(static_cast<float>(bubbleGutter), 0);
       rounded(g, {17, 14, 44, 43}, 12, gd::Color(255, 242, 225, 209));
       drawSprite(g, *sprites_[idle], {20, 16, 38, 41});
       label(g, L"小爪同伴", {71, 12, 243, 28}, 21, ink, true);
@@ -812,7 +816,7 @@ private:
           break;
         case WM_TIMER:
           if (wp == clockTimer) {
-            RECT area{0, roundedInt(212 * panelScale_), roundedInt(panelWidth * panelScale_), roundedInt(293 * panelScale_)};
+            RECT area{0, roundedInt(212 * panelScale_), roundedInt(bubble_.frame.width()), roundedInt(293 * panelScale_)};
             InvalidateRect(panel_, &area, FALSE);
           }
           return 0;
@@ -825,7 +829,6 @@ private:
           if (LOWORD(wp) == closeButton || LOWORD(wp) == IDCANCEL) hidePanel();
           return 0;
         case WM_CLOSE: hidePanel(); return 0;
-        case WM_ACTIVATE: if (LOWORD(wp) == WA_INACTIVE && panelOpen_) hidePanel(); break;
       }
     }
     if (window == actor_) {
@@ -884,6 +887,8 @@ private:
   std::wstring settings_, meowPath_;
   double panelScale_{1}, walkPixels_{}, walkSpeed_{};
   PoseAnimator poses_;
+  BubbleLayout bubble_;
+  BubbleHover bubbleHover_;
   unsigned roamCount_{};
   Point pos_{}, lastPointer_{}, pressPoint_{}, pressOffset_{}, catchPoint_{};
   ULONGLONG start_{}, lastTick_{}, nextRoam_{}, lastMove_{}, startIdle_{};
@@ -892,7 +897,7 @@ private:
   std::vector<Screen> screens_;
   std::deque<Point> path_;
   std::mt19937 random_{std::random_device{}()};
-  std::array<std::unique_ptr<gd::Bitmap>, spriteNames.size()> sprites_;
+  std::array<std::unique_ptr<gd::Bitmap>, spriteCount> sprites_;
   LayerSurface actorSurface_, effectsSurface_;
   std::string pipeBuffer_, activity_{"idle"}, count_{"0"};
   Balance balance_;

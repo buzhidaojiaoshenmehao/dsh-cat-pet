@@ -4,14 +4,24 @@
 #include <array>
 #include <numbers>
 #include <span>
+#include <string>
 
 namespace paw {
 
-enum SpriteId {
-  idle, curious, pawUp, sleepPose, belly, crouch,
-  walk1, walk1a, walk1b, walk2, walk2a, walk2b, walk3, walk3a, walk3b, walk4, walk4a, walk4b, spriteCount
+enum SpriteId : int {
+  idle, curious, pawUp, sleepPose, belly, crouch, walkFirst, stretchFirst = walkFirst + 24
 };
+inline constexpr int stretchFrames = 14, spriteCount = stretchFirst + stretchFrames;
+inline constexpr double stretchDuration = 1.65;
 enum class Action { sit, look, sleep, work, walk, reach, roll, stretch, celebrate, notice };
+
+inline std::string spriteFile(int index) {
+  static constexpr std::array names{"idle", "curious", "paw", "sleep", "belly", "crouch"};
+  if (index < walkFirst) return std::string(names[index]) + ".png";
+  const bool stretch = index >= stretchFirst;
+  const int frame = index - (stretch ? stretchFirst : walkFirst);
+  return std::string(stretch ? "stretch-" : "gait-") + (frame < 10 ? "0" : "") + std::to_string(frame) + ".png";
+}
 
 struct Pose {
   SpriteId sprite = idle;
@@ -34,11 +44,9 @@ inline Pose catPose(Action action, double seconds, double age, double distance, 
   const double breath = std::sin(seconds * 2.5);
   switch (action) {
     case Action::walk: {
-      const double step = distance / 13;
-      const int frame = int(std::fmod(step * 3, spriteCount - walk1));
-      return {SpriteId(walk1 + frame), 207, 119,
-        -2.6 * std::abs(std::sin(step * std::numbers::pi / 2)), facingRight,
-        1 + .016 * std::cos(step * std::numbers::pi), 1, facingRight ? 2.0 : -2.0};
+      constexpr int frames = stretchFirst - walkFirst;
+      const int frame = int(std::fmod(distance * frames / 52, frames));
+      return {SpriteId(walkFirst + frame), 207, 119, 0, facingRight};
     }
     case Action::reach: {
       const double paw = pulse(age, .52);
@@ -48,9 +56,9 @@ inline Pose catPose(Action action, double seconds, double age, double distance, 
       return {belly, 188, 114, -3 * pulse(age, .7), false,
         1 + .04 * pulse(age, 1.5), 1 + .022 * breath, 4 * std::sin(age * 8) * pulse(age, 1.5)};
     case Action::stretch: {
-      const double extension = pulse(age, 1.35);
-      return {crouch, 179, 104, 0, facingRight, 1 + .17 * extension, 1 - .16 * extension,
-        (facingRight ? 9 : -9) * extension};
+      const double reach = std::min(smoothStep(age / .48), 1 - smoothStep((age - 1.04) / .61));
+      const int frame = static_cast<int>(std::lround(reach * (stretchFrames - 1)));
+      return {SpriteId(stretchFirst + frame), 207, 119, 0, facingRight};
     }
     case Action::celebrate:
       return {belly, 188, 126, -14 * pulse(age, .62), false, 1, 1 + .025 * breath};
@@ -79,8 +87,9 @@ public:
       last_ = pose;
       target_ = pose;
     }
-    const bool sameGait = pose.sprite >= walk1 && target_.sprite >= walk1 && pose.mirrored == target_.mirrored;
-    if (!sameGait && (pose.sprite != target_.sprite || pose.mirrored != target_.mirrored)) {
+    const bool sameSequence = pose.sprite >= walkFirst && target_.sprite >= walkFirst &&
+      (pose.sprite >= stretchFirst) == (target_.sprite >= stretchFirst) && pose.mirrored == target_.mirrored;
+    if (!sameSequence && (pose.sprite != target_.sprite || pose.mirrored != target_.mirrored)) {
       from_ = last_;
       changed_ = now;
       transitioning_ = true;
