@@ -63,9 +63,10 @@ def foot_position(phase, offset, center, floor, height):
     contact = .63
     stride = 82
     if progress < contact:
-        return center + stride * (progress / contact - .5), floor
+        return (center + stride * (progress / contact - .5), floor), 0
     swing = (progress - contact) / (1 - contact)
-    return center + stride * (.5 - smooth(swing)), floor - height * np.sin(np.pi * swing)
+    lift = np.sin(np.pi * swing)
+    return (center + stride * (.5 - smooth(swing)), floor - height * lift), lift
 
 
 def warp_leg(image, root, paw, target, stretch, x, y):
@@ -93,14 +94,41 @@ def soften_forepaw(texture, x, y):
     colors += paw[:, :, None] * (corrected - colors)
 
 
+def bend_foreleg(arm, paw, root, foot, lift, width, x, y):
+    # Rotate the paw around its wrist while keeping its contact point on the
+    # prescribed path. The arm bends around an elbow behind the shoulder.
+    source_wrist = (182, 252)
+    angle = 57 * lift ** 2
+    paw_matrix = cv2.getRotationMatrix2D(source_wrist, angle, width)
+    paw_matrix[:, 2] += np.asarray(foot) - paw_matrix @ (175, 275, 1)
+    wrist_x, wrist_y = paw_matrix @ (*source_wrist, 1)
+    root_x, root_y = root
+    elbow_y = root_y + .51 * (wrist_y - root_y)
+    elbow_x = root_x + .36 * (wrist_x - root_x) + 7 + 8 * lift
+
+    # Short strips at the elbow and wrist preserve the width of the forearm
+    # and overlap the paw, so lifting it does not squash the whole leg.
+    target_y = [root_y - 12, root_y, elbow_y, wrist_y, wrist_y + 12]
+    source_rows = [169, 181, 218, 252, 264]
+    source_y = np.interp(y, target_y, source_rows, left=-1, right=-1).astype(np.float32)
+    target_x = np.interp(y, target_y, [root_x, root_x, elbow_x, wrist_x, wrist_x - 2])
+    source_x = np.interp(source_y, source_rows, [184, 184, 188, 182, 180])
+    source_x = (source_x + (x - target_x) / width).astype(np.float32)
+    forearm = cv2.remap(arm, source_x, source_y, cv2.INTER_LINEAR)
+    foot_pixels = cv2.warpAffine(paw, paw_matrix, arm.shape[1::-1], flags=cv2.INTER_LINEAR)
+    return over(forearm, foot_pixels)
+
+
 source = cv2.imread(str(REFERENCE), cv2.IMREAD_UNCHANGED)
 if source is None or source.shape != (283, 540, 4):
     raise RuntimeError("Run scripts/prepare-sprites.mjs to prepare the 540×283 walk reference")
 cat = premultiply(source)
 y, x = np.indices(cat.shape[:2], dtype=np.float32)
-body = cut(cat, [
+back_outline = [
     (0, 0), (539, 0), (539, 229), (479, 227), (446, 207), (430, 191), (410, 207),
     (377, 207), (350, 213), (316, 224), (281, 225), (242, 224), (215, 216),
+]
+body = cut(cat, back_outline + [
     (181, 207), (153, 210), (127, 203), (101, 203), (79, 179), (0, 169),
 ])
 
@@ -123,13 +151,40 @@ textures[1][:, :, :3] *= .985
 soften_forepaw(textures[1], x, y)
 
 
-def render(phase=None, stretch=0):
+# The chest covers both forelegs at their roots. Remove the silhouette of the
+# reference's extended foreleg from the chest before posing the legs.
+walk_body = cut(cat, back_outline + [(181, 207), (150, 207), (0, 207)], feather=1.7)
+chest_edge = np.interp(y, [143, 153, 163, 173, 181, 191, 200, 209],
+                       [62, 76, 79, 83, 90, 102, 117, 143], left=-2)
+walk_body *= smooth((x - chest_edge + 1.5) / 3)[:, :, None]
+
+# Use the straight foreleg's fur and paw for both sides. The far side is
+# slightly smaller and shaded, with its own footfall and swing.
+foreleg = textures[3]
+forearm = foreleg * (1 - smooth((y - 252) / 8))[:, :, None]
+forepaw = foreleg * smooth((y - 242) / 10)[:, :, None]
+
+
+def render_walk(phase):
+    far_foot, far_lift = foot_position(phase, .75, 129, 263, 27)
+    near_foot, near_lift = foot_position(phase, .25, 171, 274, 31)
+    far_front = bend_foreleg(forearm, forepaw, (129, 174), far_foot, far_lift, .85, x, y)
+    far_front[:, :, :3] *= .91
+    near_front = bend_foreleg(forearm, forepaw, (184, 180), near_foot, near_lift, .98, x, y)
+
+    hind = []
+    for index in (0, 2):
+        _, root, paw, offset, center, floor, lift, _ = legs[index]
+        target, _ = foot_position(phase, offset, center, floor, lift)
+        hind.append(warp_leg(textures[index], root, paw, target, 0, x, y))
+    limbs = over(over(hind[0], far_front), near_front)
+    return over(over(limbs, walk_body), hind[1])
+
+
+def render_stretch(stretch):
     limbs = []
-    for (_, root, paw, offset, center, floor, lift, extended), texture in zip(legs, textures):
-        if phase is not None:
-            target = foot_position(phase, offset, center, floor, lift)
-        else:
-            target = (center + (extended - center) * stretch, floor)
+    for (_, root, paw, _, center, floor, _, extended), texture in zip(legs, textures):
+        target = (center + (extended - center) * stretch, floor)
         limbs.append(warp_leg(texture, root, paw, target, stretch, x, y))
     result = over(limbs[0], limbs[1])
     result = over(result, warp_body(body, stretch, x, y))
@@ -137,6 +192,6 @@ def render(phase=None, stretch=0):
 
 
 for i in range(GAIT_FRAMES):
-    save(ASSETS / f"gait-{i:02d}.png", render(phase=i / GAIT_FRAMES))
+    save(ASSETS / f"gait-{i:02d}.png", render_walk(i / GAIT_FRAMES))
 for i in range(STRETCH_FRAMES):
-    save(ASSETS / f"stretch-{i:02d}.png", render(stretch=i / (STRETCH_FRAMES - 1)))
+    save(ASSETS / f"stretch-{i:02d}.png", render_stretch(i / (STRETCH_FRAMES - 1)))

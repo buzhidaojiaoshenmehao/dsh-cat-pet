@@ -7,7 +7,7 @@
 支持 macOS 13 或更新版本，包括 Apple 芯片和 Intel Mac。至少打开过一次 DeepSeek Harness Desktop 后，用 `⌘Q` 退出，再在终端运行以下命令。
 
 ```sh
-'/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh' plugin --profile desktop add 'https://github.com/buzhidaojiaoshenmehao/dsh-cat-pet/releases/download/v0.6.0/dsh-cat-pet-0.6.0.tgz'
+'/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh' plugin --profile desktop add 'https://github.com/buzhidaojiaoshenmehao/dsh-cat-pet/releases/download/v0.6.1/dsh-cat-pet-0.6.1.tgz'
 ```
 
 重新打开 Harness 后，小爪同伴会随插件启动。点击菜单栏的脚印可以打开面板、召回、隐藏或退出桌宠。Harness 安装在其他位置时，将命令里的应用路径改成实际位置。
@@ -19,7 +19,7 @@
 3. 在解压目录打开 PowerShell，运行下面的命令，再重新打开 Harness。桌宠会随插件启动。
 
 ```powershell
-dsh plugin --profile desktop add .\dsh-cat-pet-0.6.0.tgz
+dsh plugin --profile desktop add .\dsh-cat-pet-0.6.1.tgz
 ```
 
 如果终端找不到 `dsh`，在 Harness 的应用菜单启用“管理 dsh 命令”，或直接调用 Harness 安装目录中的 `resources\runtime\cli\bin\dsh.cmd`，传入相同参数。
