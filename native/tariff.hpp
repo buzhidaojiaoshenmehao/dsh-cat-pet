@@ -29,4 +29,16 @@ inline int64_t secondsUntil(int64_t now, int64_t deadline) {
   return (std::max<int64_t>(0, deadline - now) + 999) / 1000;
 }
 
+struct TariffReading {
+  Period current = Period::unknown;
+  const TariffTransition* next = nullptr;
+  int64_t remaining = -1;
+  bool operator==(const TariffReading&) const = default;
+};
+
+inline TariffReading tariffReadingAt(std::span<const TariffTransition> calendar, int64_t now) {
+  const auto window = tariffWindowAt(calendar, now);
+  return {window.current, window.next, window.next ? secondsUntil(now, window.next->at) : -1};
+}
+
 } // namespace paw

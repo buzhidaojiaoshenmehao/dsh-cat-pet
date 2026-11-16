@@ -236,7 +236,7 @@ NSSound* chime(std::initializer_list<Note> notes) {
   std::deque<paw::Point> _route;
   std::mt19937 _random;
   size_t _roamCount;
-  double _start, _lastTick, _idleSince, _nextRoam, _walked, _walkSpeed, _hoverSince, _pointerMoved;
+  double _start, _lastTick, _idleSince, _nextRoam, _walked, _walkSpeed, _hoverSince, _pointerMoved, _writingAt;
   double _playUntil, _playedAt, _caughtAt, _chaseAfter, _nextMeow, _toastUntil, _stretchAt;
   PoseAnimator _poses;
   BubbleLayout _bubbleLayout;
@@ -373,19 +373,22 @@ NSSound* chime(std::initializer_list<Note> notes) {
 
 - (void)setActivity:(const std::string&)value count:(const std::string&)count {
   if (_activity == value && _count == count) return;
+  const bool wasBusy = _activity != "idle";
   _activity = value;
   _count = count;
   const double now = uptime();
-  if (_activity == "idle") _idleSince = now;
-  if (_activity == "working") _nextRoam = std::min(_nextRoam, now + .9);
+  if (_activity == "idle") {
+    _idleSince = now;
+    if (wasBusy) _nextRoam = std::max(_nextRoam, now + 2.1);
+  } else if (!wasBusy) {
+    _writingAt = now;
+    _route.clear();
+    _stretchAt = 0;
+  }
   [self updatePanel];
 }
 
-- (NSString*)activityText {
-  if (_activity == "thinking") return @"思考中";
-  if (_activity == "working") return @"执行工具";
-  return !_bridge || _linked ? @"待命" : @"连接中";
-}
+- (NSString*)activityText { return pawText(activityTitle(_activity, !_bridge || _linked)); }
 
 - (void)acceptTask:(const Task&)task announce:(BOOL)announce {
   _recent = task;
@@ -399,9 +402,11 @@ NSSound* chime(std::initializer_list<Note> notes) {
 - (void)advanceDemo:(double)now {
   const double elapsed = now - _start;
   const double phase = std::fmod(elapsed, 26);
-  if (phase >= 3.1 && phase < 6.7) [self setActivity:"thinking" count:"1"];
-  else if (phase >= 6.7 && phase < 11.6) [self setActivity:"working" count:"1"];
-  else [self setActivity:"idle" count:"0"];
+  if (phase < 3.1 || phase >= 11.6) [self setActivity:"idle" count:"0"];
+  else if (phase < 5.8) [self setActivity:"analyzing" count:"1"];
+  else if (phase < 8.6) [self setActivity:"reading" count:"1"];
+  else if (phase < 10) [self setActivity:"reviewing" count:"1"];
+  else [self setActivity:"replying" count:"1"];
   const NSInteger cycle = NSInteger(elapsed / 26);
   if (phase >= 11.6 && _demoCycle != cycle) {
     _demoCycle = cycle;
@@ -457,7 +462,8 @@ NSSound* chime(std::initializer_list<Note> notes) {
     return;
   }
   _hoverSince = 0;
-  if (_toast || now < _playUntil || (_stretchAt && now - _stretchAt < stretchDuration)) return;
+  if (!_roam || _activity != "idle" || _toast || now < _playUntil
+      || (_stretchAt && now - _stretchAt < stretchDuration)) return;
   const double scale = [self scale];
   const paw::Point center = _position - paw::Point{0, 60 * scale};
   const double distance = length(mouse - center);
@@ -478,29 +484,23 @@ NSSound* chime(std::initializer_list<Note> notes) {
     }
     return;
   }
-  if (!_roam) return;
   if (_route.empty() && now >= _nextRoam) [self chooseRoute];
   while (!_route.empty() && length(_route.front() - _position) <= 3 * scale) {
     _position = _route.front();
     _route.pop_front();
     if (_route.empty()) {
-      _nextRoam = now + (_activity == "working" ? 1.9 : 4.7);
-      if (_activity == "idle" && _roamCount % 3 == 0) _stretchAt = now;
+      _nextRoam = now + 4.7;
+      if (_roamCount % 3 == 0) _stretchAt = now;
     }
   }
-  if (!_route.empty()) [self stepToward:_route.front() delta:dt speedLimit:(_activity == "working" ? 116 : 88) * scale
-    arriving:_route.size() == 1];
+  if (!_route.empty()) [self stepToward:_route.front() delta:dt speedLimit:88 * scale arriving:_route.size() == 1];
 }
 
 - (void)chooseRoute {
   const size_t from = nearestScreen(_screens, _position);
   const size_t to = ++_roamCount % 3 == 0 ? (from + 1) % _screens.size() : from;
   const double scale = [self scale];
-  paw::Rect area = safeArea(_screens[to].work, scale);
-  if (_activity == "working" && from == to && area.contains(_position)) {
-    area = {std::max(area.left, _position.x - 230 * scale), std::max(area.top, _position.y - 120 * scale),
-      std::min(area.right, _position.x + 230 * scale), std::min(area.bottom, _position.y + 120 * scale)};
-  }
+  const paw::Rect area = safeArea(_screens[to].work, scale);
   std::uniform_real_distribution<double> random(.12, .88);
   const paw::Point target{area.left + random(_random) * area.width(), area.top + random(_random) * area.height()};
   auto points = route(_screens, from, to, target);
@@ -533,9 +533,10 @@ NSSound* chime(std::initializer_list<Note> notes) {
   else if (_stretchAt && now - _stretchAt < stretchDuration) {
     action = Action::stretch;
     age = now - _stretchAt;
-  } else if (_activity == "working") action = Action::work;
-  else if (_activity == "thinking") action = Action::look;
-  else if (now - _idleSince > 17) action = Action::sleep;
+  } else if (_activity != "idle") {
+    action = Action::write;
+    age = now - _writingAt;
+  } else if (now - _idleSince > 17) action = Action::sleep;
   const auto framePose = _poses.sample(catPose(action, elapsed, age, _walked, _facingRight), now);
 
   const double scale = [self scale];
@@ -733,14 +734,16 @@ NSSound* chime(std::initializer_list<Note> notes) {
   _visibilityItem.title = _hidden ? @"显示桌宠" : @"隐藏桌宠";
 }
 - (void)menuDidClose:(NSMenu*)menu { (void)menu; _menuOpen = NO; }
+- (BOOL)validateMenuItem:(NSMenuItem*)item { return item != _chaseItem || _roam; }
 - (void)toggleRoam:(id)sender {
   (void)sender;
   _roam = !_roam;
   _route.clear();
+  if (!_roam) _caughtAt = 0;
   [_settings setBool:_roam forKey:@"roamEnabled"];
   [_panel showSize:_size sound:_sound roam:_roam];
 }
-- (void)toggleChase:(id)sender { (void)sender; _chase = !_chase; }
+- (void)toggleChase:(id)sender { (void)sender; if (_roam) _chase = !_chase; }
 - (void)petCat:(id)sender { (void)sender; if (_hidden) [self toggleVisible:nil]; [self play:YES]; }
 
 - (void)stretch:(id)sender {

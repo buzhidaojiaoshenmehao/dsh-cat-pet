@@ -5,7 +5,7 @@ import { formatCost, normalizeUsage, priceAttempt, pricePeriod, tariffTransition
 import { observeHarness } from '../src/tasks.js'
 import { createConnectionReader } from '../src/connection.js'
 import { queryBalance } from '../src/balance.js'
-import { balancePacket, taskPacket } from '../src/wire.js'
+import { activityPacket, balancePacket, taskPacket } from '../src/wire.js'
 
 const provider = 'deepseek-official'
 const model = 'deepseek-flash'
@@ -85,7 +85,7 @@ test('observes simultaneous turns, tools, retries and a local child without coun
   assert.equal(tasks.length, 0)
   emit(main, 'tool/result', { message: { toolCallId: 'call' } })
   emit(main, 'turn/end', { reason: { kind: 'completed' } })
-  assert.deepEqual(activities.at(-1), ['thinking', 1])
+  assert.deepEqual(activities.at(-1), ['preparing', 1])
   assert.equal(tasks[0].total, 14040)
   assert.equal(tasks[0].CNY, '0.017904')
   assert.equal(tasks[0].coverage, 'full')
@@ -95,6 +95,60 @@ test('observes simultaneous turns, tools, retries and a local child without coun
   assert.equal(tasks[1].total, null)
   assert.equal(tasks[1].outcome, 'cancelled')
   assert.deepEqual(activities.at(-1), ['idle', 0])
+})
+
+test('desktop status follows live analysis, tools and reply without copying conversation text', () => {
+  const ctx = new EventEmitter()
+  const packets = []
+  observeHarness(ctx, { connection, onActivity: (...values) => packets.push(activityPacket(...values)),
+    onTask: () => {}, clock: () => peak })
+  const session = { id: 'status-test', requestHeader: () => ({ config: { provider, model } }) }
+  const agent = { session }
+  let seq = 0
+  const emit = (type, data = {}) => ctx.emit('session/event', session, { type, data: { turn: 1, ...data }, seq: seq++ })
+  const stream = (type, data) => ctx.emit('agent/assistant-stream', { agent, frame: { type, ...data } })
+  const chunk = (attemptId, type) => stream('chunk', { attemptId, chunk: { type,
+    get text() { assert.fail('activity should only inspect the chunk kind') },
+  } })
+  const current = phase => assert.equal(packets.at(-1), activityPacket(phase, phase === 'idle' ? 0 : 1))
+
+  emit('turn/start')
+  emit('step/start')
+  current('preparing')
+  chunk('stale', 'text-delta')
+  current('preparing')
+  stream('start', { attemptId: 'first', turn: 1 })
+  chunk('first', 'reasoning-delta')
+  const startCount = packets.length
+  chunk('first', 'reasoning-delta')
+  assert.equal(packets.length, startCount)
+  current('analyzing')
+  emit('tool/call', { callId: 'lookup', name: 'web_search', arguments: 'private query' })
+  current('searching')
+  emit('tool/call', { callId: 'file', name: 'read' })
+  current('reading')
+  emit('tool/result', { message: { toolCallId: 'file' } })
+  current('searching')
+  emit('tool/result', { message: { toolCallId: 'lookup' } })
+  current('reviewing')
+  emit('step/start')
+  chunk('first', 'text-delta')
+  current('reviewing')
+  stream('start', { attemptId: 'second', turn: 1 })
+  chunk('second', 'reasoning-delta')
+  current('reviewing')
+  emit('llm/retry-started')
+  current('retrying')
+  chunk('second', 'text-delta')
+  current('retrying')
+  stream('start', { attemptId: 'retry', turn: 1 })
+  chunk('retry', 'text-delta')
+  current('replying')
+  stream('end', { attemptId: 'retry', outcome: { kind: 'abandoned' } })
+  chunk('retry', 'reasoning-delta')
+  current('replying')
+  emit('turn/end', { reason: { kind: 'cancelled' } })
+  current('idle')
 })
 
 test('does not use official rates or send an API key for a configured third-party endpoint', async () => {

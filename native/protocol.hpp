@@ -75,6 +75,20 @@ inline std::wstring taskTitle(const Task& task) {
   return L"任务未完成";
 }
 
+inline std::wstring activityTitle(std::string_view phase, bool connected) {
+  if (phase == "idle") return connected ? L"待命" : L"连接中";
+  if (phase == "preparing") return L"准备任务";
+  if (phase == "analyzing") return L"分析对话";
+  if (phase == "reviewing") return L"分析结果";
+  if (phase == "replying") return L"撰写回复";
+  if (phase == "reading") return L"读取文件";
+  if (phase == "searching") return L"查找资料";
+  if (phase == "editing") return L"编辑文件";
+  if (phase == "running") return L"运行命令";
+  if (phase == "retrying") return L"正在重试";
+  return L"执行工具";
+}
+
 inline std::wstring taskPrice(const Task& task, const Balance& balance) {
   const bool useUSD = task.mode == balance.mode && balance.wallets.size() == 1
     && balance.wallets.front().currency == "USD";

@@ -1,13 +1,20 @@
 import { formatCost, isCount, normalizeUsage, priceAttempt } from './pricing.js'
 import { accountProvider, apiProvider } from './connection.js'
 
+const toolPhases = new Map([
+  ['read', 'reading'], ['read_image', 'reading'],
+  ['glob', 'searching'], ['grep', 'searching'], ['web_fetch', 'searching'], ['web_search', 'searching'],
+  ['write', 'editing'], ['edit', 'editing'], ['apply_patch', 'editing'],
+  ['bash', 'running'], ['terminal', 'running'],
+])
+
 function usageIn(stream) {
   return stream?.findLast(record => record.type === 'chunk' && record.chunk?.type === 'usage')?.chunk.usage
 }
 
 function newTurn(number, at, owner, child) {
   return {
-    number, at, owner, child, pending: new Set(), tools: new Set(), settled: new Set(), ended: false,
+    number, at, owner, child, phase: 'preparing', pending: new Set(), tools: new Map(), settled: new Set(), ended: false,
     total: 0, input: 0, output: 0, cached: 0, cacheUnknown: false,
     reports: 0, priced: 0, unreported: 0, CNY: 0n, USD: 0n, route: undefined,
   }
@@ -42,7 +49,7 @@ function receipt(turn, reason, at) {
   }
 }
 
-/** Observe live, committed events. Keep accounting fields only, never message text or arguments. */
+/** Follow stream kinds and tool categories alongside committed usage. */
 export function observeHarness(ctx, { onActivity, onTask, connection, clock = Date.now }) {
   const active = new Map()
   const running = new Set()
@@ -52,13 +59,25 @@ export function observeHarness(ctx, { onActivity, onTask, connection, clock = Da
 
   function activity() {
     const count = new Set([...active.keys(), ...running]).size
-    const state = [...active.values()].some(turn => turn.tools.size > 0) ? 'working'
-      : count > 0 ? 'thinking' : 'idle'
+    let state = count > 0 ? 'preparing' : 'idle'
+    for (const turn of active.values()) {
+      if (turn.tools.size) {
+        for (const phase of turn.tools.values()) state = phase
+        break
+      }
+      if (turn.phase !== 'preparing') state = turn.phase
+    }
     const key = `${state}:${count}`
     if (key !== previous) {
       previous = key
       onActivity(state, count)
     }
+  }
+
+  function setPhase(turn, phase) {
+    if (turn.phase === phase) return
+    turn.phase = phase
+    activity()
   }
 
   function finish(session, turn, reason, at) {
@@ -83,13 +102,24 @@ export function observeHarness(ctx, { onActivity, onTask, connection, clock = Da
   })
 
   ctx.on('agent/assistant-stream', ({ agent, frame }) => {
-    if (frame.type !== 'start') return
     const session = agent.session
     const turn = active.get(session.id)
-    if (!turn || frame.turn !== turn.number) return
-    const provider = session.requestHeader()?.config?.provider
-    attempts.set(session, { at: clock(), provider, official: connection(provider).official })
-    if (!turn.child && (provider === apiProvider || provider === accountProvider)) balanceProvider = provider
+    if (!turn) return
+    if (frame.type === 'start' && frame.turn === turn.number) {
+      const provider = session.requestHeader()?.config?.provider
+      attempts.set(session, { id: frame.attemptId, at: clock(), provider, official: connection(provider).official })
+      if (!turn.child && (provider === apiProvider || provider === accountProvider)) balanceProvider = provider
+      return
+    }
+    const attempt = attempts.get(session)
+    if (!attempt || attempt.id !== frame.attemptId) return
+    if (frame.type === 'end') attempts.delete(session)
+    if (frame.type === 'chunk') {
+      if (frame.chunk.type === 'text-delta') setPhase(turn, 'replying')
+      if (frame.chunk.type === 'reasoning-delta' && turn.phase !== 'replying' && turn.phase !== 'reviewing') {
+        setPhase(turn, 'analyzing')
+      }
+    }
   })
 
   ctx.on('session/disposed', session => {
@@ -124,17 +154,24 @@ export function observeHarness(ctx, { onActivity, onTask, connection, clock = Da
 
     switch (type) {
       case 'step/start':
+        turn.at = at
+        attempts.delete(session)
+        if (turn.phase !== 'reviewing') setPhase(turn, 'preparing')
+        break
       case 'llm/retry-started':
         turn.at = at
         attempts.delete(session)
+        setPhase(turn, 'retrying')
         break
       case 'tool/call':
-        turn.tools.add(data.callId)
+        turn.tools.set(data.callId, toolPhases.get(data.name) ?? 'working')
         activity()
         break
       case 'tool/result':
-        turn.tools.delete(data.message.toolCallId)
-        activity()
+        if (turn.tools.delete(data.message.toolCallId)) {
+          turn.phase = 'reviewing'
+          activity()
+        }
         break
       case 'assistant/message':
       case 'assistant/attempt': {

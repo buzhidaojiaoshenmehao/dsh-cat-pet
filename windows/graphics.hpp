@@ -31,9 +31,10 @@ inline void rounded(gd::Graphics& g, gd::RectF r, float radius, gd::Color color)
 }
 
 inline void label(gd::Graphics& g, const std::wstring& text, gd::RectF r, float size, gd::Color color = ink,
-                  bool bold = false, gd::StringAlignment align = gd::StringAlignmentNear) {
+                  bool bold = false, gd::StringAlignment align = gd::StringAlignmentNear,
+                  const wchar_t* family = L"Microsoft YaHei UI") {
   if (text.empty()) return;
-  gd::Font font(L"Microsoft YaHei UI", size, bold ? gd::FontStyleBold : gd::FontStyleRegular, gd::UnitPixel);
+  gd::Font font(family, size, bold ? gd::FontStyleBold : gd::FontStyleRegular, gd::UnitPixel);
   gd::StringFormat format;
   format.SetAlignment(align);
   format.SetLineAlignment(gd::StringAlignmentCenter);

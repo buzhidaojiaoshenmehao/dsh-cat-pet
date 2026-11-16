@@ -27,7 +27,8 @@ int main() {
   const Balance balance{"ready", "api", "1", {{"USD", "10", "0", "10"}}};
   assert(grouped(task.total) == L"4,680");
   assert(taskPrice(task, balance) == L"预估 $0.000448");
-  assert(fields("activity\tthinking\t2").size() == 3);
+  assert(fields("activity\tanalyzing\t2").size() == 3);
+  assert(activityTitle("analyzing", true) == L"分析对话" && activityTitle("replying", true) == L"撰写回复");
   const auto ready = parseBalance(fields("balance\tready\tapi\t1\tCNY\t28.60\t3.60\t25.00\tUSD\t1\t0\t1"));
   assert(ready && ready->wallets.size() == 2 && ready->wallets[1].currency == "USD");
   assert(!parseBalance(fields("balance\tready\tapi\t1")));
@@ -45,6 +46,10 @@ int main() {
   assert(tariffWindowAt(calendar, 4000).next->at == 6000);
   assert(tariffWindowAt(calendar, 7000).next == nullptr);
   assert(tariffWindowAt(calendar, 8000).current == Period::unknown);
+  const auto second = tariffReadingAt(calendar, 4000);
+  assert(second == tariffReadingAt(calendar, 4999));
+  assert(tariffReadingAt(calendar, 5000).remaining == second.remaining - 1);
+  assert(tariffReadingAt(calendar, 6000).current == Period::offPeak);
 
   const auto wave = makeChime({{660, 68}, {880, 115}});
   assert(wave.size() == 44 + 24 * (68 + 115) * 2);
@@ -62,9 +67,14 @@ int main() {
   assert(halfway.sprite > walkFirst && halfway.sprite < stretchFirst && halfway.width > seated.width && halfway.width < stride.width);
   assert(animation.sample(stride, 1.20).width == stride.width);
   const auto stretching = catPose(Action::stretch, 0, .675, 0, false);
-  assert(stretching.sprite == spriteCount - 1);
+  assert(stretching.sprite == writeFirst - 1);
   assert(catPose(Action::stretch, 0, stretchDuration, 0, false).sprite == stretchFirst);
   assert(spriteBounds(500, 330, stretching, 140, 160).bottom == 160);
+  const auto writing = catPose(Action::write, 0, 0, 0, true);
+  const auto writingNext = catPose(Action::write, 0, writingDuration * .5, 0, true);
+  assert(writing.sprite == writeFirst && writingNext.sprite > writeFirst && !writingNext.mirrored);
+  assert(spriteFile(writingNext.sprite) == "write-10.png");
+  assert(catPose(Action::write, 0, writingDuration * 2, 0, false).sprite == writeFirst);
   assert(catPose(Action::sit, 3.82, 0, 0, false).blink > .95);
   double speed = 0;
   assert(walkingStep(100, .016, 88, true, speed) < .5);

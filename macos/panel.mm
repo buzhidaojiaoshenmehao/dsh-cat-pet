@@ -119,6 +119,7 @@ NSString* duration(int64_t seconds) {
   NSTextField* _period;
   NSTextField* _remaining;
   NSTextField* _deadline;
+  std::optional<paw::TariffReading> _tariff;
   NSTextField* _taskUsage;
   NSTextField* _taskPrice;
   NSTextField* _taskBreakdown;
@@ -316,24 +317,29 @@ NSString* duration(int64_t seconds) {
 
 - (void)refreshClock {
   const int64_t now = int64_t(NSDate.date.timeIntervalSince1970 * 1000);
-  const auto window = paw::tariffWindowAt(paw::tariffCalendar, now);
-  const bool peak = window.current == paw::Period::peak;
-  _period.hidden = _periodBadge.hidden = window.current == paw::Period::unknown;
-  _period.stringValue = peak ? @"高峰时段" : @"空闲时段";
-  _period.textColor = _remaining.textColor = panelColor(peak ? paw::bubblePeak : paw::bubbleOffPeak);
-  _periodBadge.fillColor = panelColor(peak ? paw::bubblePeakFill : paw::bubbleOffPeakFill);
-  if (!window.next) {
-    _remaining.font = [NSFont systemFontOfSize:13 weight:NSFontWeightMedium];
-    _remaining.textColor = panelColor(0x655e55);
-    _remaining.stringValue = @"后续计费日历待更新";
-    _deadline.stringValue = @"";
-    return;
+  const auto reading = paw::tariffReadingAt(paw::tariffCalendar, now);
+  if (_tariff == reading) return;
+  if (!_tariff || _tariff->current != reading.current || _tariff->next != reading.next) {
+    const bool peak = reading.current == paw::Period::peak;
+    _period.hidden = _periodBadge.hidden = reading.current == paw::Period::unknown;
+    _period.stringValue = peak ? @"高峰时段" : @"空闲时段";
+    _period.textColor = panelColor(peak ? paw::bubblePeak : paw::bubbleOffPeak);
+    _remaining.textColor = reading.next ? _period.textColor : panelColor(0x655e55);
+    _periodBadge.fillColor = panelColor(peak ? paw::bubblePeakFill : paw::bubbleOffPeakFill);
+    if (reading.next) {
+      NSDate* deadline = [NSDate dateWithTimeIntervalSince1970:reading.next->at / 1000.0];
+      NSString* next = reading.next->period == paw::Period::peak ? @"下次高峰" : @"下次空闲";
+      _deadline.stringValue = [NSString stringWithFormat:@"%@  %@", next, [_beijing stringFromDate:deadline]];
+    } else _deadline.stringValue = @"";
   }
-  const auto seconds = paw::secondsUntil(now, window.next->at);
-  _remaining.font = [NSFont monospacedDigitSystemFontOfSize:seconds >= 86400 ? 16 : 22 weight:NSFontWeightSemibold];
-  _remaining.stringValue = duration(seconds);
-  NSDate* deadline = [NSDate dateWithTimeIntervalSince1970:window.next->at / 1000.0];
-  NSString* next = window.next->period == paw::Period::peak ? @"下次高峰" : @"下次空闲";
-  _deadline.stringValue = [NSString stringWithFormat:@"%@  %@", next, [_beijing stringFromDate:deadline]];
+  if (!_tariff || bool(_tariff->next) != bool(reading.next)
+      || (_tariff->remaining >= 86400) != (reading.remaining >= 86400)) {
+    _remaining.font = reading.next ? [NSFont monospacedDigitSystemFontOfSize:reading.remaining >= 86400 ? 16 : 22
+      weight:NSFontWeightSemibold] : [NSFont systemFontOfSize:13 weight:NSFontWeightMedium];
+  }
+  if (!_tariff || _tariff->remaining != reading.remaining) {
+    _remaining.stringValue = reading.next ? duration(reading.remaining) : @"后续计费日历待更新";
+  }
+  _tariff = reading;
 }
 @end

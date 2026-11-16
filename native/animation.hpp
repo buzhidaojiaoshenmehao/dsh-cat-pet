@@ -9,18 +9,28 @@
 namespace paw {
 
 enum SpriteId : int {
-  idle, curious, pawUp, sleepPose, belly, crouch, walkFirst, stretchFirst = walkFirst + 24
+  idle, curious, pawUp, sleepPose, belly, crouch, walkFirst, stretchFirst = walkFirst + 24, writeFirst = stretchFirst + 14
 };
-inline constexpr int stretchFrames = 14, spriteCount = stretchFirst + stretchFrames;
+inline constexpr int stretchFrames = writeFirst - stretchFirst, writingFrames = 20;
+inline constexpr int spriteCount = writeFirst + writingFrames;
 inline constexpr double stretchDuration = 1.65;
-enum class Action { sit, look, sleep, work, walk, reach, roll, stretch, celebrate, notice };
+inline constexpr double writingDuration = 1.48;
+enum class Action { sit, sleep, write, walk, reach, roll, stretch, celebrate, notice };
+
+inline SpriteId sequenceOf(SpriteId sprite) {
+  if (sprite >= writeFirst) return writeFirst;
+  if (sprite >= stretchFirst) return stretchFirst;
+  if (sprite >= walkFirst) return walkFirst;
+  return sprite;
+}
 
 inline std::string spriteFile(int index) {
   static constexpr std::array names{"idle", "curious", "paw", "sleep", "belly", "crouch"};
   if (index < walkFirst) return std::string(names[index]) + ".png";
-  const bool stretch = index >= stretchFirst;
-  const int frame = index - (stretch ? stretchFirst : walkFirst);
-  return std::string(stretch ? "stretch-" : "gait-") + (frame < 10 ? "0" : "") + std::to_string(frame) + ".png";
+  const auto first = sequenceOf(SpriteId(index));
+  const int frame = index - first;
+  const char* prefix = first == writeFirst ? "write-" : first == stretchFirst ? "stretch-" : "gait-";
+  return std::string(prefix) + (frame < 10 ? "0" : "") + std::to_string(frame) + ".png";
 }
 
 struct Pose {
@@ -66,14 +76,15 @@ inline Pose catPose(Action action, double seconds, double age, double distance, 
       return {curious, 158, 142, -3 * pulse(age, .6)};
     case Action::sleep:
       return {sleepPose, 173, 97, 0, false, 1 + .009 * breath, 1 + .028 * std::sin(seconds * 1.9)};
-    case Action::work:
-      return {crouch, 179, 104, 0, facingRight, 1 + .012 * breath, 1 + .018 * breath};
-    case Action::look:
+    case Action::write: {
+      const double phase = std::fmod(std::max(0.0, age), writingDuration) / writingDuration;
+      const int frame = std::min(writingFrames - 1, static_cast<int>(phase * writingFrames));
+      return {SpriteId(writeFirst + frame), 166, 149};
+    }
     case Action::sit: {
       const double cycle = std::fmod(seconds + 1.7, 5.4);
       const double blink = std::max(pulse(cycle, .24), pulse(cycle - .38, .18));
-      return {action == Action::look ? curious : idle, 158, 142, 0, false,
-        1 + .008 * breath, 1 + .016 * breath, 0, blink};
+      return {idle, 158, 142, 0, false, 1 + .008 * breath, 1 + .016 * breath, 0, blink};
     }
   }
   return {};
@@ -87,9 +98,7 @@ public:
       last_ = pose;
       target_ = pose;
     }
-    const bool sameSequence = pose.sprite >= walkFirst && target_.sprite >= walkFirst &&
-      (pose.sprite >= stretchFirst) == (target_.sprite >= stretchFirst) && pose.mirrored == target_.mirrored;
-    if (!sameSequence && (pose.sprite != target_.sprite || pose.mirrored != target_.mirrored)) {
+    if (sequenceOf(pose.sprite) != sequenceOf(target_.sprite) || pose.mirrored != target_.mirrored) {
       from_ = last_;
       changed_ = now;
       transitioning_ = true;

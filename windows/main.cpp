@@ -25,7 +25,6 @@ constexpr int refreshButton = 100;
 constexpr int closeButton = 101;
 constexpr int soundButton = 102, sizeSlider = 103;
 constexpr int roamButton = 104, actionsButton = 105, taskDetailsButton = 106;
-constexpr UINT_PTR clockTimer = 2;
 constexpr int minSize = 50, maxSize = 180;
 enum MenuId { showBalance = 201, petCat, stretchPet, toggleRoam, toggleChase, toggleSound, bringHere, toggleVisible, quitPet };
 
@@ -96,12 +95,11 @@ std::wstring settingsPath() {
 }
 
 std::wstring countdownText(int64_t seconds) {
-  const auto days = seconds / 86400;
   const auto hours = seconds / 3600 % 24, minutes = seconds / 60 % 60;
   wchar_t clock[16]{};
   std::swprintf(clock, std::size(clock), L"%02d:%02d:%02d",
     static_cast<int>(hours), static_cast<int>(minutes), static_cast<int>(seconds % 60));
-  return days ? std::to_wstring(days) + L" 天 " + clock : clock;
+  return clock;
 }
 
 std::wstring beijingTime(int64_t milliseconds) {
@@ -294,6 +292,7 @@ private:
   void toggleRoaming() {
     roam_ = !roam_;
     path_.clear();
+    if (!roam_) catchAt_ = 0;
     if (!settings_.empty()) WritePrivateProfileStringW(L"pet", L"roam", roam_ ? L"1" : L"0", settings_.c_str());
     SetWindowTextW(roamControl_, roam_ ? L"自动巡游：开" : L"自动巡游：关");
     InvalidateRect(roamControl_, nullptr, FALSE);
@@ -378,10 +377,10 @@ private:
     placePanel();
     panelOpen_ = true;
     bubbleHover_.opened(static_cast<double>(GetTickCount64()) / 1000);
+    refreshTariff();
     ShowWindow(panel_, SW_SHOW);
     SetForegroundWindow(panel_);
     SetFocus(refresh_);
-    SetTimer(panel_, clockTimer, 1000, nullptr);
     requestBalance();
   }
 
@@ -397,10 +396,7 @@ private:
   void hidePanel() {
     panelOpen_ = false;
     saveSize();
-    if (panel_) {
-      KillTimer(panel_, clockTimer);
-      ShowWindow(panel_, SW_HIDE);
-    }
+    if (panel_) ShowWindow(panel_, SW_HIDE);
   }
 
   void requestBalance() {
@@ -466,10 +462,18 @@ private:
 
   void setActivity(const std::string& value, const std::string& count) {
     if (activity_ == value && count_ == count) return;
+    const bool wasBusy = activity_ != "idle";
     activity_ = value;
     count_ = count;
-    if (activity_ == "idle") startIdle_ = GetTickCount64();
-    if (activity_ == "working") nextRoam_ = std::min(nextRoam_, GetTickCount64() + 900);
+    const auto now = GetTickCount64();
+    if (activity_ == "idle") {
+      startIdle_ = now;
+      if (wasBusy) nextRoam_ = std::max(nextRoam_, now + 2100);
+    } else if (!wasBusy) {
+      writingAt_ = now;
+      path_.clear();
+      stretchAt_ = 0;
+    }
     InvalidateRect(panel_, nullptr, FALSE);
   }
 
@@ -486,9 +490,11 @@ private:
   void advanceDemo(ULONGLONG now) {
     const auto elapsed = now - start_;
     const auto phase = elapsed % 26000;
-    if (phase >= 3100 && phase < 6700) setActivity("thinking", "1");
-    else if (phase >= 6700 && phase < 11600) setActivity("working", "1");
-    else setActivity("idle", "0");
+    if (phase < 3100 || phase >= 11600) setActivity("idle", "0");
+    else if (phase < 5800) setActivity("analyzing", "1");
+    else if (phase < 8600) setActivity("reading", "1");
+    else if (phase < 10000) setActivity("reviewing", "1");
+    else setActivity("replying", "1");
     const auto cycle = elapsed / 26000;
     if (phase >= 11600 && demoCycle_ != cycle) {
       demoCycle_ = cycle;
@@ -510,11 +516,7 @@ private:
     const size_t from = nearestScreen(screens_, pos_);
     size_t to = from;
     if (++roamCount_ % 3 == 0 && screens_.size() > 1) to = (from + 1) % screens_.size();
-    Rect area = safeArea(screens_[to].work, dpi);
-    if (activity_ == "working" && from == to) {
-      area = {std::max(area.left, pos_.x - 230 * dpi), std::max(area.top, pos_.y - 120 * dpi),
-        std::min(area.right, pos_.x + 230 * dpi), std::min(area.bottom, pos_.y + 120 * dpi)};
-    }
+    const Rect area = safeArea(screens_[to].work, dpi);
     std::uniform_real_distribution<double> fraction(.12, .88);
     const Point goal{area.left + fraction(random_) * area.width(), area.top + fraction(random_) * area.height()};
     auto points = route(screens_, from, to, goal);
@@ -551,7 +553,8 @@ private:
       return;
     }
     hoverAt_ = 0;
-    if (toast_ || now < playUntil_ || (stretchAt_ && now - stretchAt_ < stretchDuration * 1000)) return;
+    if (!roam_ || activity_ != "idle" || toast_ || now < playUntil_
+        || (stretchAt_ && now - stretchAt_ < stretchDuration * 1000)) return;
 
     const Point center = pos_ - Point{0, 60 * dpi};
     const double cursorDistance = length(mouse - center);
@@ -574,23 +577,20 @@ private:
       return;
     }
 
-    if (!roam_) return;
     if (path_.empty() && now >= nextRoam_) chooseRoute(dpi);
     while (!path_.empty() && length(path_.front() - pos_) <= 3 * dpi) {
       pos_ = path_.front();
       path_.pop_front();
       if (path_.empty()) {
-        nextRoam_ = now + (activity_ == "working" ? 1900 : 4700);
-        if (activity_ == "idle" && roamCount_ % 3 == 0) stretchAt_ = now;
+        nextRoam_ = now + 4700;
+        if (roamCount_ % 3 == 0) stretchAt_ = now;
       }
     }
-    if (!path_.empty()) stepMotion(path_.front(), dt, (activity_ == "working" ? 116 : 88) * dpi, path_.size() == 1);
+    if (!path_.empty()) stepMotion(path_.front(), dt, 88 * dpi, path_.size() == 1);
   }
 
   std::wstring activityLabel() const {
-    if (activity_ == "working") return L"执行工具";
-    if (activity_ == "thinking") return L"思考中";
-    return linked_ || demo_ ? L"待命" : L"连接中";
+    return activityTitle(activity_, linked_ || demo_);
   }
 
   void tick() {
@@ -609,7 +609,10 @@ private:
       if (toast_->outcome == "completed") playFinishSound(now);
     }
     const auto mouse = pointer();
-    if (panelOpen_ && bubbleHover_.expired(static_cast<double>(now) / 1000, inBubble(bubble_, mouse))) hidePanel();
+    if (panelOpen_) {
+      if (bubbleHover_.expired(static_cast<double>(now) / 1000, inBubble(bubble_, mouse))) hidePanel();
+      else refreshTariff();
+    }
     movement(now, dt, mouse, scale());
     if (!walking_) walkSpeed_ = 0;
     paintActor(now);
@@ -630,9 +633,10 @@ private:
     else if (stretchAt_ && now - stretchAt_ < stretchDuration * 1000) {
       action = Action::stretch;
       age = static_cast<double>(now - stretchAt_) / 1000;
-    } else if (activity_ == "working") action = Action::work;
-    else if (activity_ == "thinking") action = Action::look;
-    else if ((startIdle_ && now - startIdle_ > 17000) || (demo_ && (now - start_) % 26000 > 18800)) action = Action::sleep;
+    } else if (activity_ != "idle") {
+      action = Action::write;
+      age = static_cast<double>(now - std::min(now, writingAt_)) / 1000;
+    } else if ((startIdle_ && now - startIdle_ > 17000) || (demo_ && (now - start_) % 26000 > 18800)) action = Action::sleep;
     const auto pose = poses_.sample(catPose(action, seconds, age, walkPixels_, facingRight_), seconds);
     constexpr int actorWidth = 232, actorHeight = 178;
     const int x = roundedInt(pos_.x - actorWidth * dpi / 2);
@@ -668,11 +672,11 @@ private:
             {25, top + 33, 245, 23}, 12, jade, true);
         } else if (activity_ != "idle") {
           const std::wstring count = count_ != "1" && count_ != "0" ? L" · " + ascii(count_) : L"";
-          const float top = std::min(115.0f, badgeY + 44);
-          rounded(g, {77, top, 138, 28}, 14, gd::Color(246, 255, 251, 246));
+          const float top = std::min(105.0f, badgeY + 31);
+          rounded(g, {70, top, 152, 28}, 14, gd::Color(246, 255, 251, 246));
           const float beat = static_cast<float>(std::sin(seconds * 6) * 1.0);
           oval(g, {89 - beat / 2, top + 11 - beat / 2, 6 + beat, 6 + beat}, jade);
-          label(g, activityLabel() + count, {101, top, 105, 28}, 12, jade, true);
+          label(g, activityLabel() + count, {101, top, 111, 28}, 12, jade, true);
         } else if (sprite == sleepPose) {
           label(g, L"z z z", {center + 31, 107 + static_cast<float>(std::sin(seconds * 2) * 4), 52, 24}, 15, jade, true);
         }
@@ -697,23 +701,35 @@ private:
       });
   }
 
-  void paintTariff(gd::Graphics& g) const {
+  void refreshTariff() {
     const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::system_clock::now().time_since_epoch()).count();
-    const auto window = tariffWindowAt(tariffCalendar, now);
+    const auto reading = tariffReadingAt(tariffCalendar, now);
+    if (reading == tariff_) return;
+    const bool transition = reading.current != tariff_.current || reading.next != tariff_.next;
+    tariff_ = reading;
+    const RECT dirty{roundedInt((12 + bubbleGutter) * panelScale_), roundedInt((transition ? 138 : 160) * panelScale_),
+      roundedInt(((transition ? 289 : 163) + bubbleGutter) * panelScale_), roundedInt(196 * panelScale_)};
+    InvalidateRect(panel_, &dirty, FALSE);
+  }
+
+  void paintTariff(gd::Graphics& g) const {
     label(g, L"峰谷倒计时", {15, 141, 91, 20}, 13, ink, true);
     label(g, L"北京时间", {106, 142, 64, 18}, 10, quiet);
-    const bool peak = window.current == Period::peak;
+    const bool peak = tariff_.current == Period::peak;
     const auto color = bubbleColor(peak ? bubblePeak : bubbleOffPeak);
-    if (window.current != Period::unknown) {
+    if (tariff_.current != Period::unknown) {
       rounded(g, {207, 140, 79, 21}, 10, bubbleColor(peak ? bubblePeakFill : bubbleOffPeakFill));
       label(g, peak ? L"高峰时段" : L"空闲时段", {207, 140, 79, 21}, 11, color, true, gd::StringAlignmentCenter);
     }
-    if (window.next) {
-      const auto seconds = secondsUntil(now, window.next->at);
-      label(g, countdownText(seconds), {15, 161, 148, 32}, seconds >= 86400 ? 16.f : 22.f, color, true);
-      const wchar_t* next = window.next->period == Period::peak ? L"  转高峰" : L"  转空闲";
-      label(g, beijingTime(window.next->at) + next, {160, 168, 126, 22}, 11, quiet, false, gd::StringAlignmentFar);
+    if (tariff_.next) {
+      const auto days = tariff_.remaining / 86400;
+      if (days) label(g, std::to_wstring(days) + L" 天", {15, 161, 43, 32}, 15, color, true);
+      const float clockX = days ? 53.f : 15.f;
+      label(g, countdownText(tariff_.remaining), {clockX, 161, 159 - clockX, 32}, days ? 16.f : 22.f,
+        color, true, gd::StringAlignmentNear, L"Consolas");
+      const wchar_t* next = tariff_.next->period == Period::peak ? L"  转高峰" : L"  转空闲";
+      label(g, beijingTime(tariff_.next->at) + next, {160, 168, 126, 22}, 11, quiet, false, gd::StringAlignmentFar);
     } else {
       label(g, L"后续计费日历待更新", {15, 163, 270, 28}, 13, quiet);
     }
@@ -759,29 +775,48 @@ private:
     label(g, taskTitle(task) + L"  ·  " + taskCostNote(task), {15, 286, 270, 17}, 10, quiet);
   }
 
+  void drawPanel(HDC dc) const {
+    gd::Graphics g(dc);
+    configure(g, static_cast<float>(panelScale_));
+    g.Clear(bubbleColor(bubbleFill));
+    g.TranslateTransform(static_cast<float>(bubbleGutter), 0);
+    rounded(g, {14, 9, 32, 32}, 9, bubbleColor(0xf2e1d1));
+    drawSprite(g, *sprites_[idle], {16, 10, 28, 30});
+    label(g, L"小爪同伴", {55, 11, 89, 28}, 16, ink, true);
+    label(g, demo_ ? L"演示 · " + activityLabel() : activityLabel(), {145, 13, 81, 24}, 11, quiet);
+    gd::SolidBrush rule(bubbleColor(bubbleDivider));
+    for (float y : {47.f, 132.f, 201.f}) g.FillRectangle(&rule, 14.f, y, 272.f, 1.f);
+    paintBalance(g);
+    paintTariff(g);
+    paintRecentTask(g);
+    const float extra = detailsExpanded_ ? static_cast<float>(bubbleDetailsHeight) : 0.f;
+    rounded(g, {12, 252 + extra, 276, 65}, 10, bubbleColor(bubbleControlsFill));
+    g.FillRectangle(&rule, 20.f, 283.f + extra, 260.f, 1.f);
+    g.FillRectangle(&rule, 150.f, 291.f + extra, 1.f, 17.f);
+    label(g, L"桌宠大小", {20, 255 + extra, 66, 27}, 12, ink, true);
+    label(g, std::to_wstring(sizePercent_) + L"%", {235, 255 + extra, 45, 27}, 12, jade, true, gd::StringAlignmentFar);
+  }
+
   void paintPanel() const {
     PAINTSTRUCT paint{};
     HDC dc = BeginPaint(panel_, &paint);
-    {
-      gd::Graphics g(dc);
-      configure(g, static_cast<float>(panelScale_));
-      g.Clear(bubbleColor(bubbleFill));
-      g.TranslateTransform(static_cast<float>(bubbleGutter), 0);
-      rounded(g, {14, 9, 32, 32}, 9, bubbleColor(0xf2e1d1));
-      drawSprite(g, *sprites_[idle], {16, 10, 28, 30});
-      label(g, L"小爪同伴", {55, 11, 89, 28}, 16, ink, true);
-      label(g, demo_ ? L"演示 · " + activityLabel() : activityLabel(), {145, 13, 81, 24}, 11, quiet);
-      gd::SolidBrush rule(bubbleColor(bubbleDivider));
-      for (float y : {47.f, 132.f, 201.f}) g.FillRectangle(&rule, 14.f, y, 272.f, 1.f);
-      paintBalance(g);
-      paintTariff(g);
-      paintRecentTask(g);
-      const float extra = detailsExpanded_ ? static_cast<float>(bubbleDetailsHeight) : 0.f;
-      rounded(g, {12, 252 + extra, 276, 65}, 10, bubbleColor(bubbleControlsFill));
-      g.FillRectangle(&rule, 20.f, 283.f + extra, 260.f, 1.f);
-      g.FillRectangle(&rule, 150.f, 291.f + extra, 1.f, 17.f);
-      label(g, L"桌宠大小", {20, 255 + extra, 66, 27}, 12, ink, true);
-      label(g, std::to_wstring(sizePercent_) + L"%", {235, 255 + extra, 45, 27}, 12, jade, true, gd::StringAlignmentFar);
+    if (!IsRectEmpty(&paint.rcPaint)) {
+      RECT client{};
+      GetClientRect(panel_, &client);
+      HDC buffer = CreateCompatibleDC(dc);
+      HBITMAP image = buffer ? CreateCompatibleBitmap(dc, client.right, client.bottom) : nullptr;
+      HGDIOBJ previous = image ? SelectObject(buffer, image) : nullptr;
+      if (previous) {
+        drawPanel(buffer);
+        const auto& dirty = paint.rcPaint;
+        BitBlt(dc, dirty.left, dirty.top, dirty.right - dirty.left, dirty.bottom - dirty.top,
+          buffer, dirty.left, dirty.top, SRCCOPY);
+        SelectObject(buffer, previous);
+      } else {
+        drawPanel(dc);
+      }
+      if (image) DeleteObject(image);
+      if (buffer) DeleteDC(buffer);
     }
     EndPaint(panel_, &paint);
   }
@@ -830,7 +865,8 @@ private:
     AppendMenuW(actions, MF_STRING, stretchPet, L"伸懒腰");
     AppendMenuW(actions, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(actions, MF_STRING | (roam_ ? MF_CHECKED : MF_UNCHECKED), toggleRoam, L"桌面巡游");
-    AppendMenuW(actions, MF_STRING | (chase_ ? MF_CHECKED : MF_UNCHECKED), toggleChase, L"追光标");
+    AppendMenuW(actions, MF_STRING | (chase_ ? MF_CHECKED : MF_UNCHECKED) | (roam_ ? MF_ENABLED : MF_GRAYED),
+      toggleChase, L"追光标");
     AppendMenuW(actions, MF_STRING | (soundEnabled_ ? MF_CHECKED : MF_UNCHECKED), toggleSound, L"音效");
     AppendMenuW(actions, MF_STRING, bringHere, L"叫到当前屏幕");
     AppendMenuW(actions, MF_STRING | (trayReady_ ? MF_ENABLED : MF_GRAYED), toggleVisible, hidden_ ? L"显示桌宠" : L"隐藏桌宠");
@@ -853,7 +889,7 @@ private:
         nextRoam_ = std::max(nextRoam_, stretchAt_ + 2200);
         break;
       case toggleRoam: toggleRoaming(); break;
-      case toggleChase: chase_ = !chase_; break;
+      case toggleChase: if (roam_) chase_ = !chase_; break;
       case toggleSound: toggleChime(); break;
       case bringHere:
         path_.clear();
@@ -888,12 +924,6 @@ private:
             return reinterpret_cast<LRESULT>(settingsBrush_);
           }
           break;
-        case WM_TIMER:
-          if (wp == clockTimer) {
-            RECT area{0, roundedInt(133 * panelScale_), roundedInt(bubble_.frame.width()), roundedInt(201 * panelScale_)};
-            InvalidateRect(panel_, &area, FALSE);
-          }
-          return 0;
         case WM_HSCROLL:
           if (reinterpret_cast<HWND>(lp) == slider_) resizePet();
           return 0;
@@ -969,11 +999,12 @@ private:
   PoseAnimator poses_;
   BubbleLayout bubble_;
   BubbleHover bubbleHover_;
+  TariffReading tariff_;
   unsigned roamCount_{};
   Point pos_{}, lastPointer_{}, pressPoint_{}, pressOffset_{}, catchPoint_{};
   ULONGLONG start_{}, lastTick_{}, nextRoam_{}, lastMove_{}, startIdle_{};
   ULONGLONG hoverAt_{}, playUntil_{}, sparkAt_{}, catchAt_{}, chaseAfter_{}, toastUntil_{}, demoCycle_{~0ULL};
-  ULONGLONG saveSizeAt_{}, nextMeow_{}, stretchAt_{};
+  ULONGLONG saveSizeAt_{}, nextMeow_{}, stretchAt_{}, writingAt_{};
   std::vector<Screen> screens_;
   std::deque<Point> path_;
   std::mt19937 random_{std::random_device{}()};
